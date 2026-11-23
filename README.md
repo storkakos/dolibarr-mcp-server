@@ -63,15 +63,25 @@ The server only appends; rotate the file with logrotate (`copytruncate`). The ap
 
 ## Development
 
-The unit tests drive the MCP server over real HTTP with a fake Dolibarr behind it (`tests/fake_dolibarr.py`). They need no Docker:
+The unit tests drive the MCP server over real HTTP with a fake Dolibarr behind it (`tests/fake_dolibarr.py`). They need no Docker, but Python 3.13 on Linux (`requirements.lock` is resolved for Linux).
+
+On the Windows dev machine, never run them locally: one command copies the working tree (uncommitted changes included) to the test VM, runs pytest there in a throwaway container, shows the result and cleans up. Run it from Git Bash; arguments go to pytest, the exit code is pytest's:
+
+```sh
+bash scripts/test-on-vm.sh
+bash scripts/test-on-vm.sh tests/test_config.py -x
+```
+
+See [docs/agents/test-vm.md](docs/agents/test-vm.md) for the VM, run names and cleanup.
+
+On a Linux machine, run them directly:
 
 ```sh
 python -m venv .venv
-.venv/Scripts/python -m pip install --no-deps -r requirements.lock -r requirements-build.lock   # .venv/bin/python on Linux
-.venv/Scripts/python -m pip install --no-deps --no-build-isolation -e .
-.venv/Scripts/python -m pip install pytest==8.4.2
-.venv/Scripts/python -m pip install "pywin32>=310"   # Windows only: the MCP SDK needs it there, the Linux lock file does not list it
-.venv/Scripts/python -m pytest -q
+.venv/bin/pip install --no-deps -r requirements.lock -r requirements-build.lock
+.venv/bin/pip install --no-deps --no-build-isolation -e .
+.venv/bin/pip install pytest==8.4.2
+.venv/bin/pytest
 ```
 
 ## Licence
