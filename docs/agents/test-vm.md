@@ -12,9 +12,22 @@ A throwaway VM on the maintainer's LAN for running the tests and anything that n
 
 No password is written down anywhere. If the key is missing or rejected, ask the maintainer. Don't try to guess or recover a password.
 
-## What runs where
+## Tests always run on the VM
 
-pytest runs locally on the Windows dev machine (see the Development section of the README; the suite takes well under a minute) and on the VM. The smoke test and the test stack need Docker, so they run on the VM only.
+Run pytest, the smoke test and the test stack on the VM, never locally on the Windows dev machine. The smoke test and the test stack need Docker, which only the VM has. pytest would run on Windows, but the machine is slow, has no admin rights and a heavy virus scanner, so a local run takes many minutes and looks like a hang. On the VM the whole suite takes under a minute.
+
+## One command: `scripts/test-on-vm.sh`
+
+From Git Bash in your checkout or worktree:
+
+```sh
+RUN=dr16 bash scripts/test-on-vm.sh                          # whole suite
+RUN=dr16 bash scripts/test-on-vm.sh tests/test_config.py -x  # arguments go to pytest
+```
+
+The script does the steps below for you: it copies the working tree to `/root/dolibarr-mcp-server-$RUN`, runs pytest in a throwaway container `$RUN-pytest` (the Python image from the `Dockerfile`'s `FROM` line, `python:3.13-slim` until there is one, and the lock files), prints the output, removes the folder and the container again, also on failure or Ctrl-C, and exits with pytest's exit code. It refuses to start if the folder already exists, so it never touches another run. Without `RUN` it picks a random `dev-<hex>` name. pytest needs no port. `VM_HOST`, `VM_KEY` and `VM_KNOWN_HOSTS` override the connection settings in the table above.
+
+The sections below are the manual steps, for the smoke test, the test stack and debugging.
 
 ## Connect
 
