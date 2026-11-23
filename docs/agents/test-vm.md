@@ -84,8 +84,6 @@ Pass pytest arguments at the end as usual, e.g. `pytest -q tests/test_config.py`
 
 ## Run the smoke test
 
-Once `scripts/smoke-test.sh` exists in this repo:
-
 ```sh
 $SSH "cd $DIR && SMOKE_PROJECT=$RUN SMOKE_PORT=$PORT bash scripts/smoke-test.sh"
 ```
