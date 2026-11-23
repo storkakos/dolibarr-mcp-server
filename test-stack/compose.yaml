@@ -1,0 +1,128 @@
+# TEST ONLY, NOT FOR PRODUCTION. Dolibarr 23 with restoauth, Keycloak and the MCP server behind a TLS
+# proxy (see README.md). Every password and secret in this folder is a test value.
+#
+#   ./make-certs.sh                   # test CA + certificate for the example hostnames
+#   docker compose up -d --build      # installs and configures everything
+#   docker compose logs -f setup      # wait for "setup complete"
+# TEST_TAG (default: local) names the three images built here, so runs on a shared Docker host
+# keep their own images apart.
+name: dolibarr-mcp-test
+
+x-net: &net
+  networks:
+    net: {}
+
+services:
+  # TLS for the example hostnames. Inside the network the hostnames point here (aliases).
+  proxy:
+    image: caddy:2.10.2
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./certs:/certs:ro
+    networks:
+      net:
+        aliases: [erp.example.com, sso.example.com, mcp.example.com]
+
+  db:
+    image: mariadb:11.4.13
+    environment:
+      MARIADB_ROOT_PASSWORD: test-root-pw       # test value
+      MARIADB_DATABASE: dolibarr
+      MARIADB_USER: dolibarr
+      MARIADB_PASSWORD: test-dolibarr-db-pw     # test value
+    volumes:
+      - db:/var/lib/mysql
+    <<: *net
+
+  # Dolibarr 23 (official image) with restoauth from its release ZIP; the version is pinned in
+  # dolibarr/Dockerfile (RESTOAUTH_VERSION). On every start dolibarr/50-test-stack.sh installs the
+  # ZIP and runs dolibarr/configure.php (modules, restoauth settings, openid_connect, test users,
+  # sample data); the container turns healthy when that succeeded.
+  dolibarr:
+    build: ./dolibarr
+    image: dolibarr-mcp-test-dolibarr:${TEST_TAG:-local}
+    depends_on: [db]
+    environment:
+      DOLI_DB_HOST: db
+      DOLI_DB_NAME: dolibarr
+      DOLI_DB_USER: dolibarr
+      DOLI_DB_PASSWORD: test-dolibarr-db-pw     # test value
+      DOLI_URL_ROOT: https://erp.example.com
+      DOLI_AUTH: openid_connect,dolibarr
+      DOLI_ADMIN_LOGIN: admin
+      DOLI_ADMIN_PASSWORD: Test-Admin-Pw1!      # test value
+      DOLI_INSTANCE_UNIQUE_ID: test-instance-unique-id-0123456789   # test value
+      DOLI_COMPANY_NAME: Example Company
+      DOLI_COMPANY_COUNTRYCODE: DE
+      # Read by dolibarr/configure.php
+      TEST_MCP_RESOURCE: https://mcp.example.com/mcp
+      TEST_REDIRECT_ALLOWLIST: https://chat.example.com/api/mcp/dolibarr/oauth/callback
+      TEST_OIDC_ISSUER: https://sso.example.com/realms/example
+      TEST_OIDC_CLIENT_ID: dolibarr
+      TEST_OIDC_CLIENT_SECRET: test-secret-dolibarr-client-0123456789   # test value
+    volumes:
+      - dolibarr-documents:/var/www/documents
+      - dolibarr-custom:/var/www/html/custom
+      - ./certs/ca.crt:/certs/ca.crt:ro
+    <<: *net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    # start-dev: file database, fine for tests. Behind the proxy with the public URL.
+    command: ["start-dev", "--hostname=https://sso.example.com", "--proxy-headers=xforwarded", "--http-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: test-kc-admin-pw   # test value
+      KC_HEALTH_ENABLED: "true"                       # /health on the management port 9000
+    volumes:
+      - keycloak:/opt/keycloak/data
+    <<: *net
+
+  # The MCP server from this repo (built from the repo root).
+  mcp:
+    build: ..
+    image: dolibarr-mcp-server:test-stack-${TEST_TAG:-local}
+    environment:
+      DOLIBARR_URL: https://erp.example.com
+      DOLIBARR_OAUTH_ISSUER: https://erp.example.com/custom/restoauth
+      MCP_RESOURCE_URL: https://mcp.example.com/mcp
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8131"
+      SSL_CERT_FILE: /etc/dolibarr-mcp/ca.pem
+      MCP_AUDIT_LOG: /tmp/mcp-dolibarr-audit.log
+    volumes:
+      - ./certs/ca.crt:/etc/dolibarr-mcp/ca.pem:ro
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    <<: *net
+
+  # One-shot: Keycloak realm, client and users, then checks through the proxy ("setup complete").
+  setup:
+    build: ./client
+    image: dolibarr-mcp-test-client:${TEST_TAG:-local}
+    command: ["python", "setup.py"]
+    depends_on:
+      proxy:
+        condition: service_started
+      keycloak:
+        condition: service_started
+      dolibarr:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+    volumes:
+      - ./certs/ca.crt:/ca.crt:ro
+    environment:
+      REQUESTS_CA_BUNDLE: /ca.crt
+    <<: *net
+
+networks:
+  net: {}
+
+volumes:
+  db: {}
+  dolibarr-documents: {}
+  dolibarr-custom: {}
+  keycloak: {}

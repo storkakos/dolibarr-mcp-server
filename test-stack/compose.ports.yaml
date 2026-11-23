@@ -1,0 +1,22 @@
+# TEST ONLY. Optional: publish every service of the test stack on the Docker host, to reach it with
+# <host IP>:<port>. Without this file the stack publishes nothing.
+#
+#   docker compose -f compose.yaml -f compose.ports.yaml up -d
+#
+# Every host port can be changed with the variable next to it (shell or a .env file next to
+# compose.yaml), e.g. when another stack on the same host already uses it:
+#   TEST_HTTPS_PORT=8443 TEST_DOLIBARR_PORT=18082 docker compose -f compose.yaml -f compose.ports.yaml up -d
+# Logins and the OAuth flows still need the *.example.com hostnames on port 443 (see README).
+services:
+  proxy:
+    ports: ["${TEST_HTTPS_PORT:-443}:443"]          # all hostnames, HTTPS
+  dolibarr:
+    ports: ["${TEST_DOLIBARR_PORT:-8082}:80"]       # Dolibarr's Apache, plain HTTP
+  keycloak:
+    ports:
+      - "${TEST_KEYCLOAK_PORT:-8080}:8080"          # Keycloak, plain HTTP (admin console)
+      - "${TEST_KEYCLOAK_MGMT_PORT:-9000}:9000"     # Keycloak management (health, metrics)
+  mcp:
+    ports: ["${TEST_MCP_PORT:-8131}:8131"]          # MCP server, plain HTTP
+  db:
+    ports: ["${TEST_DB_PORT:-3306}:3306"]           # MariaDB (user dolibarr / test-dolibarr-db-pw)

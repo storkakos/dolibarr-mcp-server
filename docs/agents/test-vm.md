@@ -90,6 +90,23 @@ $SSH "cd $DIR && SMOKE_PROJECT=$RUN SMOKE_PORT=$PORT bash scripts/smoke-test.sh"
 
 The script tags its image `dolibarr-mcp-server:<version>-$RUN`, so it never replaces another run's image or the shared `dolibarr-mcp-server:<version>` tag. When it ends it stops its containers (`docker compose down`) and deletes its `.smoke` work folder, but it keeps the image.
 
+## Run the test stack
+
+The full stack from `test-stack/` (see its README), under your own project name and image tag. It publishes no ports, so it needs no port of its own:
+
+```sh
+$SSH "cd $DIR/test-stack && sh make-certs.sh && TEST_TAG=$RUN docker compose -p $RUN up -d --build"
+$SSH "cd $DIR/test-stack && docker wait $RUN-setup-1; docker compose -p $RUN logs setup | tail -15"
+```
+
+`docker wait` prints `0` when the setup ended with "setup complete". Take it down again with its volumes and its images:
+
+```sh
+$SSH "cd $DIR/test-stack && docker compose -p $RUN down --volumes --remove-orphans && docker rmi dolibarr-mcp-test-dolibarr:$RUN dolibarr-mcp-server:test-stack-$RUN dolibarr-mcp-test-client:$RUN"
+```
+
+Keep the pulled base images (`dolibarr/dolibarr`, `mariadb`, `caddy`, Keycloak, `alpine`): other runs use them too.
+
 ## Clean up
 
 Remove only what you created yourself, and nothing else:
