@@ -1,0 +1,25 @@
+# TEST ONLY. TLS proxy for the example hostnames, with the test certificate from make-certs.sh.
+# Caddy passes the Host header and X-Forwarded-Proto/-For/-Host, as Dolibarr, Keycloak and the MCP
+# server expect behind a reverse proxy.
+{
+	auto_https off
+}
+
+(tls_site) {
+	tls /certs/site.crt /certs/site.key
+}
+
+erp.example.com:443 {
+	import tls_site
+	reverse_proxy dolibarr:80
+}
+
+sso.example.com:443 {
+	import tls_site
+	reverse_proxy keycloak:8080
+}
+
+mcp.example.com:443 {
+	import tls_site
+	reverse_proxy mcp:8131
+}
