@@ -4,6 +4,8 @@
   issued by the Dolibarr module restoauth. The server forwards it to the Dolibarr REST API; Dolibarr checks
   user and rights as it does for an API key.
 - 401 with RFC 9728 protected resource metadata that points at restoauth in Dolibarr as authorization server.
+  Both advertise the public MCP_RESOURCE_URL, never the bind address. Behind the reverse proxy the public
+  host from MCP_RESOURCE_URL is accepted in the Host header; other hosts get 421 (DNS-rebinding protection).
 - Token check via GET /api/index.php/restoauth/me: returns user, rights and token expiry. The result is kept
   in memory only, for at most CACHE_SECONDS.
 - Rights: which rights a path needs comes from the default rule plus the exceptions in the module's
@@ -35,6 +37,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .config import ConfigError, load_config
 
@@ -174,6 +177,49 @@ mcp.settings.auth = AuthSettings(
     validate_token_resource=False,
 )
 mcp._token_verifier = DolibarrTokenVerifier()
+
+# DNS-rebinding protection: the SDK creates FastMCP with host 127.0.0.1, which allows loopback hosts
+# only, and setting settings.host later does not change that. Behind the reverse proxy, though, the
+# public name from MCP_RESOURCE_URL arrives in the Host header. Allow it as well; every other host
+# stays refused (421). Loopback stays allowed for the container healthcheck.
+mcp.settings.transport_security = TransportSecuritySettings(
+    enable_dns_rebinding_protection=True,
+    allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", *CONFIG.public_hosts],
+    allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*", CONFIG.public_origin],
+)
+
+
+class _LowercaseHostOrigin:
+    """Lower-cases the Host and Origin headers before the SDK checks them.
+
+    Host names and schemes are case-insensitive, but the SDK's comparison (TransportSecurityMiddleware)
+    is not: "MCP.Example.com" would get 421. CONFIG.public_hosts/public_origin are already lower case,
+    and an origin has no path, so lower-casing does not change its meaning.
+    """
+
+    _HEADERS = (b"host", b"origin")
+
+    def __init__(self, app: Any) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] in ("http", "websocket"):
+            headers = [(k, v.lower() if k in self._HEADERS else v) for k, v in scope["headers"]]
+            scope = {**scope, "headers": headers}
+        await self.app(scope, receive, send)
+
+
+# Applies to mcp.run() (which calls self.streamable_http_app()) and to the tests that take the app directly.
+_sdk_streamable_http_app = mcp.streamable_http_app
+
+
+def _streamable_http_app():  # noqa: ANN202  (Starlette, as in the SDK)
+    app = _sdk_streamable_http_app()
+    app.add_middleware(_LowercaseHostOrigin)
+    return app
+
+
+mcp.streamable_http_app = _streamable_http_app
 
 
 def _token() -> str:

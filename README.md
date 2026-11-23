@@ -8,6 +8,12 @@ Work in progress: install, configuration and operations chapters follow before t
 
 Every setting comes from environment variables, documented in [.env.example](.env.example). `DOLIBARR_URL`, `DOLIBARR_OAUTH_ISSUER` and `MCP_RESOURCE_URL` are required and have no defaults. A missing or malformed value stops startup with a message that names the setting.
 
+### Behind a reverse proxy
+
+Run the server behind your own TLS reverse proxy and set `MCP_RESOURCE_URL` to the public URL MCP clients use, e.g. `https://mcp.example.com/mcp`. The protected resource metadata (`/.well-known/oauth-protected-resource/mcp`) and the `401` challenge always advertise this URL, never the internal bind address.
+
+The proxy must pass the original `Host` header through (nginx: `proxy_set_header Host $host;`, Caddy and Traefik do this by default). The server accepts the host (and port) of `MCP_RESOURCE_URL` and loopback (for the container healthcheck); any other `Host` gets `421 Misdirected Request` and a foreign `Origin` gets `403` (DNS-rebinding protection). Host and origin are compared case-insensitively. If the URL has no port or the scheme's default port, both `host` and `host:443` (or `:80`) are accepted.
+
 ### Internal CA
 
 If Dolibarr's HTTPS certificate is issued by your own certificate authority, mount the CA bundle (PEM) read-only into the container and point `SSL_CERT_FILE` at the mount target, e.g. `SSL_CERT_FILE=/etc/dolibarr-mcp/ca.pem`. The bundle **replaces** the built-in list of public CAs, so it must contain the CA that issued Dolibarr's certificate (the root, plus intermediates if Dolibarr does not send them). Certificate verification is never turned off.
