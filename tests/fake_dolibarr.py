@@ -6,6 +6,7 @@ actually reached Dolibarr.
 """
 from __future__ import annotations
 
+import copy
 import socket
 import threading
 import time
@@ -61,6 +62,8 @@ SAMPLE = {
     "products": [{"id": "1", "ref": "SRV-01", "label": "Consulting hour", "price": "100", "status": "1"}],
 }
 
+OUTSTANDING_INVOICES = [{"id": "1", "ref": "FA2611-0001", "socid": "1", "total_ttc": "119.00", "remaintopay": "119.00"}]
+
 
 @dataclass
 class User:
@@ -86,11 +89,39 @@ class FakeDolibarr:
     base_url: str = ""
     # seconds from now until issued tokens expire
     token_lifetime: int = 3600
+    # Lists have this many rows (None: the sample rows). Dolibarr honours "limit" unless ignore_limit is set,
+    # like an endpoint that does not support it.
+    list_rows: int | None = None
+    ignore_limit: bool = False
+    # Answer every request except restoauth/me with this HTTP status and error message.
+    fail_status: int | None = None
+    fail_message: str = "Internal error"
+    # The rights rules restoauth/me delivers (tests may edit them, e.g. drop an exception).
+    rights_rules: dict = field(default_factory=lambda: copy.deepcopy(RIGHTS_RULES))
 
     def reset(self) -> None:
         self.tokens.clear()
         self.requests.clear()
         self.token_lifetime = 3600
+        self.list_rows = None
+        self.ignore_limit = False
+        self.fail_status = None
+        self.fail_message = "Internal error"
+        self.rights_rules = copy.deepcopy(RIGHTS_RULES)
+
+    def data_requests(self) -> list[ReceivedRequest]:
+        """Requests other than the token check (restoauth/me): what a tool asked Dolibarr for."""
+        return [r for r in self.requests if r.path != "/restoauth/me"]
+
+    def _rows(self, kind: str, query: dict[str, str]) -> list[dict]:
+        if self.list_rows is None:
+            rows = SAMPLE[kind]
+        else:
+            rows = [{"id": str(i), "ref": f"REF-{i}", "name": f"Row {i}", "status": "1"}
+                    for i in range(1, self.list_rows + 1)]
+        if not self.ignore_limit and query.get("limit", "").isdigit():
+            rows = rows[:int(query["limit"])]
+        return rows
 
     def _user(self, request: Request) -> User | None:
         auth = request.headers.get("authorization") or ""
@@ -114,15 +145,22 @@ class FakeDolibarr:
                 "rights": list(user.rights),
                 "token": {"type": "restoauth", "expires_at": int(time.time()) + self.token_lifetime,
                           "connection": 1, "client": "Test client"},
-                "api_rights_rules": RIGHTS_RULES,
+                "api_rights_rules": self.rights_rules,
             })
+        if self.fail_status is not None:
+            return JSONResponse({"error": {"code": self.fail_status, "message": self.fail_message}},
+                                status_code=self.fail_status)
         if path == "/restoauth/endpoints":
             return JSONResponse(ENDPOINTS)
+        if path == "/status":
+            return JSONResponse({"success": {"code": 200, "dolibarr_version": "23.0.3"}})
         parts = path.strip("/").split("/")
         if parts[0] in SAMPLE:
             rows = SAMPLE[parts[0]]
             if len(parts) == 1:
-                return JSONResponse(rows)
+                return JSONResponse(self._rows(parts[0], dict(request.query_params)))
+            if len(parts) == 3 and parts[0] == "thirdparties" and parts[2].lower() == "outstandinginvoices":
+                return JSONResponse(OUTSTANDING_INVOICES)
             if len(parts) == 2:
                 hit = [r for r in rows if r["id"] == parts[1]]
                 if hit:

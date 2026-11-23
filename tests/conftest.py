@@ -18,6 +18,35 @@ from fake_dolibarr import FakeDolibarr, User, free_port, serve_in_thread
 RESOURCE_URL = "https://mcp.example.test/mcp"
 ISSUER = "https://dolibarr.example.test/custom/restoauth"
 VALID_TOKEN = "valid-token-0123456789abcdef0123456789abcdef"
+# Row cap for the test session, below the default (50) so a capped and a default limit differ.
+MAX_ROWS = 25
+
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+def _state(path: Path):
+    """What a write would change: existence, size and modification time (of a folder: its entries)."""
+    if not path.exists():
+        return None
+    if path.is_dir():
+        return sorted((p.name, p.stat().st_size, p.stat().st_mtime_ns) for p in path.iterdir())
+    return path.stat().st_size, path.stat().st_mtime_ns
+
+
+@pytest.fixture(scope="session", autouse=True)
+def operator_data_untouched():
+    """The test suite never writes to the operator's data folders: the default audit log under /data
+    (C:\\data on Windows) and a logs folder next to the source. Every server the tests start gets an
+    audit log in a pytest temp folder instead."""
+    from dolibarr_mcp_server.config import DEFAULT_AUDIT_LOG
+
+    default_log = Path(DEFAULT_AUDIT_LOG)
+    watched = [default_log, default_log.parent, REPO / "logs"]
+    before = {p: _state(p) for p in watched}
+    yield
+    after = {p: _state(p) for p in watched}
+    assert after == before, "the test suite wrote to an operator data folder"
 
 
 @pytest.fixture(scope="session")
@@ -41,6 +70,7 @@ def mcp_server(fake_dolibarr, tmp_path_factory) -> str:
         "MCP_PORT": str(port),
         # The server caches restoauth/me per token; tests change users and rights between calls.
         "MCP_RIGHTS_CACHE_SECONDS": "0",
+        "MCP_MAX_ROWS": str(MAX_ROWS),
         "MCP_AUDIT_LOG": str(tmp_path_factory.mktemp("logs") / "audit.log"),
     })
     # Configuration is read at import time, so import only after the environment is set.
