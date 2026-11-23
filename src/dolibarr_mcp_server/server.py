@@ -720,8 +720,9 @@ def _check_audit_log_writable() -> None:
 
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    log.info("Dolibarr MCP server on %s, listening on %s:%s (Dolibarr %s, issuer %s, audit log %s)",
-             MCP_RESOURCE_URL, MCP_HOST, MCP_PORT, DOLIBARR_URL, DOLIBARR_ISSUER, CONFIG.audit_log)
+    log.info("Dolibarr MCP server on %s, listening on %s:%s (Dolibarr %s, issuer %s, audit log %s, CA bundle %s)",
+             MCP_RESOURCE_URL, MCP_HOST, MCP_PORT, DOLIBARR_URL, DOLIBARR_ISSUER, CONFIG.audit_log,
+             CONFIG.ca_bundle or "built-in public CAs")
     _check_audit_log_writable()
     mcp.run(transport="streamable-http")
 

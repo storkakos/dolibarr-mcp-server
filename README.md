@@ -8,6 +8,12 @@ Work in progress: install, configuration and operations chapters follow before t
 
 Every setting comes from environment variables, documented in [.env.example](.env.example). `DOLIBARR_URL`, `DOLIBARR_OAUTH_ISSUER` and `MCP_RESOURCE_URL` are required and have no defaults. A missing or malformed value stops startup with a message that names the setting.
 
+### Internal CA
+
+If Dolibarr's HTTPS certificate is issued by your own certificate authority, mount the CA bundle (PEM) read-only into the container and point `SSL_CERT_FILE` at the mount target, e.g. `SSL_CERT_FILE=/etc/dolibarr-mcp/ca.pem`. The bundle **replaces** the built-in list of public CAs, so it must contain the CA that issued Dolibarr's certificate (the root, plus intermediates if Dolibarr does not send them). Certificate verification is never turned off.
+
+A missing, unreadable or empty bundle stops startup with a message that names `SSL_CERT_FILE`. With a bundle that does not contain the right CA, the server starts, but every request gets `401` and the log shows `Dolibarr not reachable: ConnectError`.
+
 ## Tools
 
 All tools only read. Every call runs with the caller's own Dolibarr token and rights.
