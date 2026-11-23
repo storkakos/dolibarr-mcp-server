@@ -4,6 +4,10 @@ An MCP server for Dolibarr 23: read-only tools, and every call runs with the cal
 
 Work in progress: install, configuration and operations chapters follow before the first release.
 
+## Configuration
+
+Every setting comes from environment variables, documented in [.env.example](.env.example). `DOLIBARR_URL`, `DOLIBARR_OAUTH_ISSUER` and `MCP_RESOURCE_URL` are required and have no defaults. A missing or malformed value stops startup with a message that names the setting.
+
 ## Development
 
 The unit tests drive the MCP server over real HTTP with a fake Dolibarr behind it (`tests/fake_dolibarr.py`). They need no Docker:

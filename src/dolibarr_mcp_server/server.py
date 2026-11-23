@@ -28,16 +28,23 @@ from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 
-# Provisional configuration: the configuration contract (no machine-specific defaults, fail fast on
-# missing or malformed settings) is a separate step.
-DOLIBARR_URL = os.getenv("DOLIBARR_URL", "http://127.0.0.1:8125").rstrip("/")
-DOLIBARR_ISSUER = os.getenv("DOLIBARR_OAUTH_ISSUER", f"{DOLIBARR_URL}/custom/restoauth")
-MCP_HOST = os.getenv("MCP_HOST", "127.0.0.1")
-MCP_PORT = int(os.getenv("MCP_PORT", "8131"))
-MCP_RESOURCE_URL = os.getenv("MCP_RESOURCE_URL", f"http://{MCP_HOST}:{MCP_PORT}/mcp")
-AUDIT_LOG = Path(os.getenv("MCP_AUDIT_LOG", "logs/mcp-dolibarr-audit.log"))
-MAX_ROWS = int(os.getenv("MCP_MAX_ROWS", "50"))
-CACHE_SECONDS = int(os.getenv("MCP_RIGHTS_CACHE_SECONDS", "30"))
+from .config import ConfigError, load_config
+
+# Read the configuration at import time: a missing or malformed setting stops startup here, with a
+# message that names the variable (no traceback, no fallback to localhost).
+try:
+    CONFIG = load_config(os.environ)
+except ConfigError as e:
+    raise SystemExit(f"Configuration error: {e}") from None
+
+DOLIBARR_URL = CONFIG.dolibarr_url
+DOLIBARR_ISSUER = CONFIG.issuer
+MCP_HOST = CONFIG.host
+MCP_PORT = CONFIG.port
+MCP_RESOURCE_URL = CONFIG.resource_url
+AUDIT_LOG = Path(CONFIG.audit_log)
+MAX_ROWS = CONFIG.max_rows
+CACHE_SECONDS = CONFIG.rights_cache_seconds
 MAX_TEXT = 20000
 API = f"{DOLIBARR_URL}/api/index.php"
 
@@ -480,9 +487,26 @@ async def api_get(path: str, query: dict[str, str] | None = None) -> str:
     return await _guarded("api_get", {"path": path, "query": q}, "GET", path, run)
 
 
+def _check_audit_log_writable() -> None:
+    """Create or open the audit log at startup; if it is not writable, stop with a message.
+
+    Otherwise a log folder with the wrong owner (e.g. ./logs belongs to root while the container
+    runs without root) would only show up on the first tool call.
+    """
+    try:
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        with AUDIT_LOG.open("a", encoding="utf-8"):
+            pass
+    except OSError as e:
+        raise SystemExit(f"Configuration error: audit log {CONFIG.audit_log} is not writable "
+                         f"(MCP_AUDIT_LOG, check the folder and its permissions): {e.strerror or e}") from None
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    log.info("Dolibarr MCP server on %s (Dolibarr %s, issuer %s)", MCP_RESOURCE_URL, DOLIBARR_URL, DOLIBARR_ISSUER)
+    log.info("Dolibarr MCP server on %s, listening on %s:%s (Dolibarr %s, issuer %s, audit log %s)",
+             MCP_RESOURCE_URL, MCP_HOST, MCP_PORT, DOLIBARR_URL, DOLIBARR_ISSUER, CONFIG.audit_log)
+    _check_audit_log_writable()
     mcp.run(transport="streamable-http")
 
 
