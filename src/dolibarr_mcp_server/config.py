@@ -17,8 +17,9 @@ startup the same way.
 
 MCP_RESOURCE_URL is the public URL behind the operator's reverse proxy. The protected resource metadata
 and the 401 challenge advertise it, never the bind address. Its host (and port) are also the public
-Host header values the proxy passes through (public_hosts), always in lower case; the server compares
-incoming Host and Origin headers in lower case as well.
+Host header values the proxy passes through (public_hosts), in normal form (normalise_host): lower case,
+without a trailing dot, IPv6 literals compressed. The server brings incoming Host and Origin headers into
+the same form before comparing them, so equivalent spellings of the public host are accepted.
 
 SSL_CERT_FILE is read by the HTTP client itself (httpx with trust_env); the bundle replaces the built-in
 public CAs. It is checked here only so that a missing, unreadable or empty bundle stops startup instead of
@@ -26,6 +27,7 @@ turning every token check into a 401. Certificate verification is never turned o
 """
 from __future__ import annotations
 
+import ipaddress
 import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -115,15 +117,29 @@ def _ca_bundle(env: Mapping[str, str], name: str) -> str | None:
     return path
 
 
+def normalise_host(hostname: str) -> str:
+    """One spelling per host name: lower case, without the trailing dot of a fully qualified name, an
+    IPv6 literal (without brackets) in compressed form. Anything that is not a valid IPv6 literal is
+    only lower-cased and stripped of one trailing dot, so it can never turn into an allowed host."""
+    hostname = hostname.lower()
+    if ":" in hostname:
+        try:
+            return ipaddress.IPv6Address(hostname).compressed
+        except ValueError:
+            return hostname
+    return hostname[:-1] if hostname.endswith(".") else hostname
+
+
 def _public_host(resource_url: str) -> tuple[tuple[str, ...], str]:
     """Host header values and origin of MCP_RESOURCE_URL (already checked by _http_url).
 
     Without a port, or with the scheme's default port (443/80): "host" and "host:<default port>"
     (proxies send either), origin without a port (as browsers send it). With another port: only
-    "host:port". urlsplit already returns scheme and hostname in lower case.
+    "host:port". The host is in normal form (normalise_host); urlsplit already returns the scheme in
+    lower case.
     """
     parts = urlsplit(resource_url)
-    hostname, port = parts.hostname, parts.port
+    hostname, port = normalise_host(parts.hostname), parts.port
     host = f"[{hostname}]" if ":" in hostname else hostname
     if port is None or port == DEFAULT_PORTS[parts.scheme]:
         return (host, f"{host}:{DEFAULT_PORTS[parts.scheme]}"), f"{parts.scheme}://{host}"
