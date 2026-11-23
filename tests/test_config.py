@@ -24,7 +24,7 @@ REPO = Path(__file__).resolve().parent.parent
 RESOURCE_URL = "https://mcp.customer.test/mcp"
 ISSUER = "https://erp.customer.test/custom/restoauth"
 CONFIG_VARS = ("DOLIBARR_URL", "DOLIBARR_OAUTH_ISSUER", "MCP_RESOURCE_URL", "MCP_HOST", "MCP_PORT",
-               "MCP_MAX_ROWS", "MCP_RIGHTS_CACHE_SECONDS", "MCP_AUDIT_LOG")
+               "MCP_MAX_ROWS", "MCP_RIGHTS_CACHE_SECONDS", "MCP_AUDIT_LOG", "SSL_CERT_FILE")
 REQUIRED = ("DOLIBARR_URL", "DOLIBARR_OAUTH_ISSUER", "MCP_RESOURCE_URL")
 
 
