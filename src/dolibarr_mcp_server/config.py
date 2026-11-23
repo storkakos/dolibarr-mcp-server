@@ -15,6 +15,11 @@ A missing required value never falls back to localhost or a developer machine: s
 message that names the variable. A malformed value (no http(s) URL, not a number, out of range) stops
 startup the same way.
 
+MCP_RESOURCE_URL is the public URL behind the operator's reverse proxy. The protected resource metadata
+and the 401 challenge advertise it, never the bind address. Its host (and port) are also the public
+Host header values the proxy passes through (public_hosts), always in lower case; the server compares
+incoming Host and Origin headers in lower case as well.
+
 SSL_CERT_FILE is read by the HTTP client itself (httpx with trust_env); the bundle replaces the built-in
 public CAs. It is checked here only so that a missing, unreadable or empty bundle stops startup instead of
 turning every token check into a 401. Certificate verification is never turned off.
@@ -31,6 +36,7 @@ DEFAULT_RIGHTS_CACHE_SECONDS = 30
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8131
 DEFAULT_AUDIT_LOG = "/data/logs/mcp-dolibarr-audit.log"
+DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
 class ConfigError(ValueError):
@@ -48,6 +54,10 @@ class Config:
     port: int
     audit_log: str
     ca_bundle: str | None
+    # Host header values under which the server is publicly reachable (from MCP_RESOURCE_URL)
+    public_hosts: tuple[str, ...]
+    # Origin of MCP_RESOURCE_URL (scheme://host[:port])
+    public_origin: str
 
 
 def _optional(env: Mapping[str, str], name: str) -> str | None:
@@ -105,15 +115,37 @@ def _ca_bundle(env: Mapping[str, str], name: str) -> str | None:
     return path
 
 
+def _public_host(resource_url: str) -> tuple[tuple[str, ...], str]:
+    """Host header values and origin of MCP_RESOURCE_URL (already checked by _http_url).
+
+    Without a port, or with the scheme's default port (443/80): "host" and "host:<default port>"
+    (proxies send either), origin without a port (as browsers send it). With another port: only
+    "host:port". urlsplit already returns scheme and hostname in lower case.
+    """
+    parts = urlsplit(resource_url)
+    hostname, port = parts.hostname, parts.port
+    host = f"[{hostname}]" if ":" in hostname else hostname
+    if port is None or port == DEFAULT_PORTS[parts.scheme]:
+        return (host, f"{host}:{DEFAULT_PORTS[parts.scheme]}"), f"{parts.scheme}://{host}"
+    return (f"{host}:{port}",), f"{parts.scheme}://{host}:{port}"
+
+
 def load_config(env: Mapping[str, str]) -> Config:
+    # Checked in the documented order, so the first missing setting named is DOLIBARR_URL.
+    dolibarr_url = _http_url(env, "DOLIBARR_URL").rstrip("/")
+    issuer = _http_url(env, "DOLIBARR_OAUTH_ISSUER").rstrip("/")
+    resource_url = _http_url(env, "MCP_RESOURCE_URL")
+    public_hosts, public_origin = _public_host(resource_url)
     return Config(
-        dolibarr_url=_http_url(env, "DOLIBARR_URL").rstrip("/"),
-        issuer=_http_url(env, "DOLIBARR_OAUTH_ISSUER").rstrip("/"),
-        resource_url=_http_url(env, "MCP_RESOURCE_URL"),
+        dolibarr_url=dolibarr_url,
+        issuer=issuer,
+        resource_url=resource_url,
         max_rows=_int(env, "MCP_MAX_ROWS", DEFAULT_MAX_ROWS, 1, 10_000),
         rights_cache_seconds=_int(env, "MCP_RIGHTS_CACHE_SECONDS", DEFAULT_RIGHTS_CACHE_SECONDS, 0, 3600),
         host=_optional(env, "MCP_HOST") or DEFAULT_HOST,
         port=_int(env, "MCP_PORT", DEFAULT_PORT, 1, 65535),
         audit_log=_optional(env, "MCP_AUDIT_LOG") or DEFAULT_AUDIT_LOG,
         ca_bundle=_ca_bundle(env, "SSL_CERT_FILE"),
+        public_hosts=public_hosts,
+        public_origin=public_origin,
     )
