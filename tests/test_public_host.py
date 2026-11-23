@@ -4,7 +4,9 @@ Requests through the proxy carry the public host name in the Host header. The ho
 MCP_RESOURCE_URL must be accepted; the DNS-rebinding protection stays on for every other host.
 Loopback keeps working for the container healthcheck. The protected resource metadata and the 401
 challenge always advertise the public URL, never the internal bind address. The host and origin check
-runs before the token check, on every route, so a refused request never reaches Dolibarr.
+runs before the token check, on every route, so a refused request never reaches Dolibarr. Equivalent
+spellings of a host (letter case, trailing dot, IPv6 literal written differently) are the same host, on
+the configured and on the incoming side.
 """
 from __future__ import annotations
 
@@ -15,7 +17,7 @@ import httpx
 import pytest
 
 from conftest import RESOURCE_URL, VALID_TOKEN
-from fake_dolibarr import User, free_port
+from fake_dolibarr import User
 from test_config import _assert_stops_and_names, _base, _run_until_exit, start_server  # noqa: F401  (fixture)
 
 PUBLIC_METADATA_URL = "https://mcp.example.test/.well-known/oauth-protected-resource/mcp"
@@ -89,10 +91,20 @@ def test_metadata_names_the_public_resource_url(mcp_server, dolibarr, host):
     assert "127.0.0.1" not in r.text
 
 
-def test_public_url_wins_over_a_wildcard_bind_address(start_server, dolibarr):
+# The server configured exactly as in the container (MCP_HOST=0.0.0.0), but its app served on loopback
+# only, so the test never opens a port on all interfaces of the machine it runs on.
+_SERVE_WILDCARD_CONFIG_ON_LOOPBACK = """
+import uvicorn
+from dolibarr_mcp_server import server
+assert server.MCP_HOST == "0.0.0.0", server.MCP_HOST
+uvicorn.run(server.mcp.streamable_http_app(), host="127.0.0.1", port=server.MCP_PORT, log_level="warning")
+"""
+
+
+def test_public_url_wins_over_a_wildcard_bind_address(start_server, dolibarr):  # noqa: F811
     # Inside the container the server binds 0.0.0.0; that address must never show up in what it advertises.
-    port = free_port()
-    server = start_server(**_base(DOLIBARR_URL=dolibarr.base_url, MCP_HOST="0.0.0.0", MCP_PORT=str(port)))
+    server = start_server(["-c", _SERVE_WILDCARD_CONFIG_ON_LOOPBACK],
+                          **_base(DOLIBARR_URL=dolibarr.base_url, MCP_HOST="0.0.0.0"))
 
     r = _challenge(server.base_url, "mcp.customer.test")
 
@@ -152,13 +164,47 @@ def test_foreign_origin_is_refused_with_403(mcp_server, dolibarr, origin):
     assert not _dolibarr_was_called(dolibarr)
 
 
-@pytest.mark.parametrize("loopback", ["localhost", "127.0.0.1"])
+@pytest.mark.parametrize("loopback", ["localhost", "127.0.0.1", "[::1]", "[0:0:0:0:0:0:0:1]", "localhost."])
 def test_loopback_host_keeps_working(mcp_server, dolibarr, loopback):
     port = mcp_server.rsplit(":", 1)[1]
 
     r = _call_whoami(mcp_server, f"{loopback}:{port}")
 
     assert r.status_code == 200, r.text
+
+
+# --- equivalent spellings of the public host: trailing dot of a fully qualified name -----------
+
+@pytest.mark.parametrize("host", ["mcp.example.test.", "mcp.example.test.:443", "MCP.Example.Test.:443"])
+def test_public_host_with_trailing_dot_is_accepted(mcp_server, dolibarr, host):
+    r = _call_whoami(mcp_server, host)
+
+    assert r.status_code == 200, r.text
+    assert "Max Muster" in r.json()["result"]["content"][0]["text"]
+
+
+@pytest.mark.parametrize("origin", ["https://mcp.example.test.", "HTTPS://MCP.Example.Test."])
+def test_public_origin_with_trailing_dot_is_accepted(mcp_server, dolibarr, origin):
+    r = _call_whoami(mcp_server, "mcp.example.test.", origin)
+
+    assert r.status_code == 200, r.text
+
+
+@pytest.mark.parametrize("host", ["evil.test.", "mcp.example.test..", "mcp.example.test.evil.test.",
+                                  "mcp.example.test.:8443", ".", "[mcp.example.test]", "[2001:db8::5"])
+def test_unrelated_or_malformed_host_with_dots_or_brackets_is_refused_with_421(mcp_server, dolibarr, host):
+    r = _call_whoami(mcp_server, host)
+
+    assert r.status_code == 421
+    assert not _dolibarr_was_called(dolibarr)
+
+
+@pytest.mark.parametrize("origin", ["https://evil.test.", "http://mcp.example.test.", "https://mcp.example.test.."])
+def test_foreign_origin_with_trailing_dot_is_refused_with_403(mcp_server, dolibarr, origin):
+    r = _call_whoami(mcp_server, "mcp.example.test", origin)
+
+    assert r.status_code == 403
+    assert not _dolibarr_was_called(dolibarr)
 
 
 # --- the host and origin check comes before the token check ----------------------------------
@@ -264,6 +310,33 @@ def test_resource_url_with_ipv6_host(start_server, dolibarr):  # noqa: F811
     assert _call_whoami(server.base_url, "[2001:db8::5]").status_code == 200
     assert _call_whoami(server.base_url, "[2001:db8::5]:443").status_code == 200
     assert _call_whoami(server.base_url, "[2001:db8::6]").status_code == 421
+
+
+@pytest.mark.parametrize("resource_url", ["https://[2001:db8::5]/mcp", "https://[2001:DB8:0::5]/mcp",
+                                          "https://[2001:0db8:0000:0000:0000:0000:0000:0005]:443/mcp"],
+                         ids=["compressed", "zero-group-capitals", "full-default-port"])
+def test_ipv6_host_is_accepted_in_any_spelling(start_server, dolibarr, resource_url):  # noqa: F811
+    server = start_server(**_base(DOLIBARR_URL=dolibarr.base_url, MCP_RESOURCE_URL=resource_url))
+
+    for host in ("[2001:db8::5]", "[2001:db8:0::5]", "[2001:DB8:0:0:0:0:0:5]:443", "[2001:0db8::0005]"):
+        r = _call_whoami(server.base_url, host)
+        assert r.status_code == 200, (host, r.text)
+        assert "Max Muster" in r.json()["result"]["content"][0]["text"]
+    assert _call_whoami(server.base_url, "[2001:db8::5]", "https://[2001:db8:0::5]").status_code == 200
+    for host in ("[2001:db8::6]", "[2001:db8:0::5]:8443", "2001:db8::5", "[2001:db8::5]x", "[2001:db8::5]."):
+        assert _call_whoami(server.base_url, host).status_code == 421, host
+    assert _call_whoami(server.base_url, "[2001:db8::5]", "https://[2001:db8::6]").status_code == 403
+
+
+def test_resource_url_with_trailing_dot_accepts_the_name_with_and_without_it(start_server, dolibarr):  # noqa: F811
+    server = start_server(**_base(DOLIBARR_URL=dolibarr.base_url, MCP_RESOURCE_URL="https://mcp.customer.test./mcp"))
+
+    for host in ("mcp.customer.test", "mcp.customer.test.", "mcp.customer.test:443", "MCP.customer.TEST.:443"):
+        assert _call_whoami(server.base_url, host).status_code == 200, host
+    assert _call_whoami(server.base_url, "mcp.customer.test", "https://mcp.customer.test").status_code == 200
+    assert _call_whoami(server.base_url, "mcp.customer.test", "https://mcp.customer.test.").status_code == 200
+    assert _call_whoami(server.base_url, "evil.test.").status_code == 421
+    assert _call_whoami(server.base_url, "mcp.customer.test..").status_code == 421
 
 
 # --- MCP_RESOURCE_URL must name a host -------------------------------------------------------
