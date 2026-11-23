@@ -4,6 +4,22 @@ An MCP server for Dolibarr 23: read-only tools, and every call runs with the cal
 
 Work in progress: install, configuration and operations chapters follow before the first release.
 
+## Run with Docker
+
+The image is built on your own Docker host from a tagged checkout; there is no registry image. You need Docker with the Compose plugin, and internet access to Docker Hub and PyPI while building.
+
+```sh
+git clone https://github.com/storkakos/dolibarr-mcp-server.git
+cd dolibarr-mcp-server
+git checkout vX.Y.Z
+cp .env.example .env          # set DOLIBARR_URL, DOLIBARR_OAUTH_ISSUER and MCP_RESOURCE_URL
+mkdir -p logs && sudo chown 10001:10001 logs
+docker compose up -d --build
+docker compose ps             # STATUS shows "(healthy)" after a few seconds
+```
+
+The container runs as UID 10001 with a read-only root filesystem and publishes port 8131 on `127.0.0.1` only (`MCP_PUBLISH_PORT` changes the host port); point your TLS reverse proxy at it. The audit log goes to `./logs` on the host (`MCP_LOG_DIR`). The healthcheck fetches the protected resource metadata over loopback and never goes through `HTTP_PROXY`/`HTTPS_PROXY`.
+
 ## Configuration
 
 Every setting comes from environment variables, documented in [.env.example](.env.example). `DOLIBARR_URL`, `DOLIBARR_OAUTH_ISSUER` and `MCP_RESOURCE_URL` are required and have no defaults. A missing or malformed value stops startup with a message that names the setting.
@@ -82,6 +98,12 @@ python -m venv .venv
 .venv/bin/pip install --no-deps --no-build-isolation -e .
 .venv/bin/pip install pytest==8.4.2
 .venv/bin/pytest
+```
+
+The container smoke test needs a Docker host (on the Windows dev machine: the test VM, see [docs/agents/test-vm.md](docs/agents/test-vm.md)). It builds the image, starts it next to a fake Dolibarr on HTTPS with a throwaway internal CA, and checks the healthcheck, the `401` challenge, the protected resource metadata, one tool call, the CA handling and the audit log from outside, without touching your `.env` or `./logs`:
+
+```sh
+bash scripts/smoke-test.sh
 ```
 
 ## Licence

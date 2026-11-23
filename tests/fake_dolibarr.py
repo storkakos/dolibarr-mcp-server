@@ -177,6 +177,23 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def main() -> None:
+    """Standalone fake Dolibarr for the container smoke test (scripts/smoke-test.sh).
+
+    FAKE_DOLIBARR_TOKENS: comma-separated tokens to accept, each for the default user (Max Muster with
+    all read rights); FAKE_DOLIBARR_PORT: listen port (default 8080).
+    FAKE_DOLIBARR_SSL_CERTFILE / FAKE_DOLIBARR_SSL_KEYFILE: serve HTTPS with this certificate and key.
+    """
+    import os
+
+    tokens = [t for t in os.environ.get("FAKE_DOLIBARR_TOKENS", "").split(",") if t]
+    dolibarr = FakeDolibarr(tokens={t: User() for t in tokens})
+    uvicorn.run(dolibarr.app(), host="0.0.0.0", port=int(os.environ.get("FAKE_DOLIBARR_PORT", "8080")),
+                log_level="warning",
+                ssl_certfile=os.environ.get("FAKE_DOLIBARR_SSL_CERTFILE") or None,
+                ssl_keyfile=os.environ.get("FAKE_DOLIBARR_SSL_KEYFILE") or None)
+
+
 def serve_in_thread(app, port: int, **uvicorn_options) -> uvicorn.Server:
     """Start an ASGI app with uvicorn on 127.0.0.1:<port> in a daemon thread and wait until it is up."""
     server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="warning", **uvicorn_options))
@@ -187,3 +204,7 @@ def serve_in_thread(app, port: int, **uvicorn_options) -> uvicorn.Server:
             raise RuntimeError(f"server on port {port} did not start")
         time.sleep(0.05)
     return server
+
+
+if __name__ == "__main__":
+    main()

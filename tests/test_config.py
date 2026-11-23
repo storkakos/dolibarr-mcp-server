@@ -24,7 +24,9 @@ REPO = Path(__file__).resolve().parent.parent
 RESOURCE_URL = "https://mcp.customer.test/mcp"
 ISSUER = "https://erp.customer.test/custom/restoauth"
 CONFIG_VARS = ("DOLIBARR_URL", "DOLIBARR_OAUTH_ISSUER", "MCP_RESOURCE_URL", "MCP_HOST", "MCP_PORT",
-               "MCP_MAX_ROWS", "MCP_RIGHTS_CACHE_SECONDS", "MCP_AUDIT_LOG", "SSL_CERT_FILE")
+               "MCP_MAX_ROWS", "MCP_RIGHTS_CACHE_SECONDS", "MCP_AUDIT_LOG", "SSL_CERT_FILE",
+               # read by docker compose on the host, not by the server
+               "MCP_PUBLISH_PORT", "MCP_LOG_DIR")
 REQUIRED = ("DOLIBARR_URL", "DOLIBARR_OAUTH_ISSUER", "MCP_RESOURCE_URL")
 
 
@@ -249,6 +251,68 @@ def test_unwritable_audit_log_stops_startup_and_names_it(tmp_path):
 
     output = _assert_stops_and_names(result, "MCP_AUDIT_LOG")
     assert "not writable" in output
+
+
+# --- container healthcheck ------------------------------------------------------------------
+
+def _healthcheck(env: dict[str, str] | None = None, **config: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, "-m", "dolibarr_mcp_server.healthcheck"], env=env or _env(**config),
+                          capture_output=True, text=True, timeout=30)
+
+
+@pytest.mark.parametrize("resource_url", [RESOURCE_URL, "https://mcp.customer.test/dolibarr/mcp",
+                                          "https://mcp.customer.test:8443/"])
+def test_healthcheck_passes_against_running_server(start_server, dolibarr, resource_url):
+    config = _base(DOLIBARR_URL=dolibarr.base_url, MCP_RESOURCE_URL=resource_url)
+    start_server(**config)
+
+    result = _healthcheck(**config)
+
+    assert result.returncode == 0, result.stderr
+    assert not dolibarr.requests  # needs no token and does not ask Dolibarr
+
+
+def test_healthcheck_ignores_proxy_from_environment(start_server, dolibarr):
+    # An operator sets HTTP(S)_PROXY in .env so the server reaches Dolibarr; the healthcheck's loopback
+    # request must not go through that proxy, even without NO_PROXY.
+    config = _base(DOLIBARR_URL=dolibarr.base_url)
+    start_server(**config)
+    dead_proxy = f"http://127.0.0.1:{free_port()}"  # nothing listens there
+    env = _env(**config)
+    for name in ("NO_PROXY", "no_proxy"):
+        env.pop(name, None)
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"):
+        env[name] = dead_proxy
+
+    result = _healthcheck(env)
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_healthcheck_queries_loopback_whatever_the_bind_address(start_server, dolibarr):
+    # The healthcheck sees the server's environment, MCP_HOST included, but must not connect to the bind
+    # address. Here MCP_HOST names an unreachable documentation address (TEST-NET-1) while the server
+    # listens on loopback (so the test never opens a port on all interfaces of the machine it runs on).
+    config = _base(DOLIBARR_URL=dolibarr.base_url)
+    start_server(**config)
+
+    result = _healthcheck(**{**config, "MCP_HOST": "192.0.2.1"})
+
+    assert result.returncode == 0, result.stderr
+
+
+def test_healthcheck_fails_without_server():
+    result = _healthcheck(**_base())
+
+    assert result.returncode == 1
+    assert "unhealthy" in result.stderr
+
+
+def test_healthcheck_fails_on_missing_configuration():
+    result = _healthcheck(**_base(DOLIBARR_URL=None))
+
+    assert result.returncode == 1
+    assert "DOLIBARR_URL" in result.stderr
 
 
 # --- .env.example documents every setting ---------------------------------------------------
