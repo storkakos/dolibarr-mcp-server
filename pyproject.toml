@@ -1,0 +1,37 @@
+[build-system]
+# Pinned exactly, like the runtime dependencies. Keep equal to requirements-build.lock.
+requires = ["setuptools==84.2.1", "wheel==0.48.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dolibarr-mcp-server"
+description = "MCP server for Dolibarr: read-only tools, every call runs with the caller's own Dolibarr token"
+requires-python = ">=3.13"
+license = "MIT"
+license-files = ["LICENSE"]
+dynamic = ["version"]
+# Pinned exactly: the versions this server is tested with
+dependencies = [
+    "httpx==0.28.1",
+    "mcp[cli]==1.30.0",
+    "uvicorn==0.54.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest==8.4.2",
+]
+
+[project.scripts]
+dolibarr-mcp-server = "dolibarr_mcp_server.server:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "dolibarr_mcp_server.__version__" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# The server must decide the SDK's token resource check explicitly.
+filterwarnings = ["error:`AuthSettings.validate_token_resource` is not set:DeprecationWarning"]
