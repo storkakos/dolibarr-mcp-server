@@ -16,7 +16,11 @@ services:
     ports:
       - "${TEST_KEYCLOAK_PORT:-8080}:8080"          # Keycloak, plain HTTP (admin console)
       - "${TEST_KEYCLOAK_MGMT_PORT:-9000}:9000"     # Keycloak management (health, metrics)
+  librechat:
+    ports: ["${TEST_LIBRECHAT_PORT:-3080}:3080"]    # LibreChat, plain HTTP
   mcp:
     ports: ["${TEST_MCP_PORT:-8131}:8131"]          # MCP server, plain HTTP
   db:
     ports: ["${TEST_DB_PORT:-3306}:3306"]           # MariaDB (user dolibarr / test-dolibarr-db-pw)
+  mongo:
+    ports: ["${TEST_MONGO_PORT:-27017}:27017"]      # MongoDB (no auth)

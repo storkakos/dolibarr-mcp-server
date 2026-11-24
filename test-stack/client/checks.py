@@ -1,6 +1,9 @@
 """TEST ONLY. End to end: an MCP client connects through restoauth (Keycloak login, consent, PKCE),
 refreshes, gets caught reusing a refresh token, revokes; then the MCP server's tools run as two
 connected users with different rights, and a user without the connect right is turned away.
+Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat users log in through
+Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
+chat checks need an LLM key in llm.env and are skipped without it).
 Reports each check as PASS, FAIL or SKIP; exit code 1 if any check failed.
 
     docker compose run --rm client            # python checks.py; -v adds the traceback of a failure
@@ -311,6 +314,69 @@ def _():
     r = requests.get(f"{flows.API}/invoices", headers={"Authorization": f"Bearer {state['carl_tok']}"})
     assert r.status_code in (401, 403), f"Dolibarr gave carl the invoices: {r.status_code}"
     return f"Dolibarr answers carl's /invoices with {r.status_code}"
+
+
+print("== Example setup: LibreChat (docs/setup/example-keycloak-librechat.md)")
+chats: dict = {}
+
+
+def _librechat(user):
+    lc = flows.LibreChat(user[0], user[1])
+    me = lc.login()
+    assert me.get("email") == user[4], me
+    chats[user[0]] = lc
+    return f"{me.get('name')} <{me.get('email')}>, PKCE {lc.pkce}"
+
+
+def _connect(user):
+    s = chats[user[0]].connect_dolibarr()
+    if s["consent"]:
+        text = s["consent"]
+        assert "LibreChat MCP Client" in text and f"({user[0]})" in text and "may not connect" not in text, text[:400]
+        assert "keycloak login" not in s["seen"], f"Keycloak asked for the password again: {s['seen']}"
+    return "connected" + (f" after consent, pages {s['seen']}" if s["consent"] else " (already authorized earlier)")
+
+
+@check("example 5: a Keycloak user logs into LibreChat")
+def _():
+    return _librechat(anna)
+
+
+@check("example 6: connecting the dolibarr server opens restoauth's consent page")
+def _():
+    return _connect(anna)
+
+
+@check("example option: Dolibarr assistant preselected for new chats")
+def _():
+    specs = chats[anna[0]].config()["modelSpecs"]
+    spec = next(x for x in specs["list"] if x["name"] == "dolibarr-assistant")
+    assert specs.get("prioritize") is True and spec.get("default") is True \
+        and spec.get("mcpServers") == ["dolibarr"], specs
+    return "default spec dolibarr-assistant with the dolibarr server"
+
+
+def _whoami_chat(user):
+    if not flows.llm_key_present():
+        return "SKIP no LLM key (llm.env), see README"
+    lc = chats[user[0]]
+    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == "dolibarr-assistant")
+    calls, text = lc.ask("Use the whoami tool: who am I in Dolibarr?", spec)
+    outputs = " ".join(str(c.get("output")) for c in calls if "whoami" in (c.get("name") or ""))
+    assert f"{user[2]} {user[3]} ({user[0]})" in outputs, f"tool calls {calls}, answer {text[:200]}"
+    return text.strip()[:80]
+
+
+@check("example 7: whoami in a chat names the logged-in Dolibarr user")
+def _():
+    return _whoami_chat(anna)
+
+
+@check("example 7: a second user gets their own name")
+def _():
+    _librechat(carl)
+    _connect(carl)
+    return _whoami_chat(carl)
 
 
 failed = [r for r in results if r[0] == "FAIL"]

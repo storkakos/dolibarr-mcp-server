@@ -1,10 +1,15 @@
 """TEST ONLY. Keycloak through its admin REST API: realm `example`, client `dolibarr` for Dolibarr's
-openid_connect login, and the test users.
+openid_connect login, client `librechat` for the LibreChat login, and the test users.
+
+Same values as the admin-console tables in docs/setup/example-keycloak-librechat.md. Differences for
+the local test, each on purpose: the realm itself (the manual assumes it exists); fixed client
+secrets (test values) instead of copying them from the Credentials tab; a post-logout redirect for
+Dolibarr's logout button.
 
 Dolibarr matches the Keycloak user by `preferred_username` (MAIN_AUTHENTICATION_OIDC_LOGIN_CLAIM), so
 users must not change their username and nobody may register themselves.
 """
-from common import DOLIBARR, KC_SECRET_DOLIBARR, KC_USERS, REALM, SSO, kc_admin, say
+from common import CHAT, DOLIBARR, KC_SECRET_DOLIBARR, KC_SECRET_LIBRECHAT, KC_USERS, REALM, SSO, kc_admin, say
 
 
 def _ok(r):
@@ -40,8 +45,12 @@ def setup_realm() -> None:
         say("   keycloak client", cid)
 
     # Dolibarr 23's openid_connect callback (core/lib/openid_connect.lib.php) and its login page after logout.
+    # The post-logout URI ends in a wildcard: Dolibarr 23 appends "?client_id=..&returnTo=.." to the
+    # configured logout URL, so the post_logout_redirect_uri Keycloak receives is index.php plus that text.
     client("dolibarr", "Dolibarr", DOLIBARR, f"{DOLIBARR}/core/modules/openid_connect/callback.php",
-           f"{DOLIBARR}/index.php", KC_SECRET_DOLIBARR)
+           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR)
+    # LibreChat's OpenID login callback (OPENID_CALLBACK_URL in librechat/librechat.env).
+    client("librechat", "LibreChat", CHAT, f"{CHAT}/oauth/openid/callback", "", KC_SECRET_LIBRECHAT)
 
     realm = _ok(s.get(R)).json()
     realm.update({"registrationAllowed": False, "editUsernameAllowed": False})

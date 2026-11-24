@@ -19,6 +19,11 @@ sso.example.com:443 {
 	reverse_proxy keycloak:8080
 }
 
+chat.example.com:443 {
+	import tls_site
+	reverse_proxy librechat:3080
+}
+
 mcp.example.com:443 {
 	import tls_site
 	reverse_proxy mcp:8131

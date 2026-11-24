@@ -1,12 +1,15 @@
 """TEST ONLY. Browser flows: an MCP client (like LibreChat) connecting through restoauth, with the
-Dolibarr login through Keycloak and restoauth's consent page, and MCP calls with the token it gets."""
+Dolibarr login through Keycloak and restoauth's consent page, and MCP calls with the token it gets;
+then LibreChat itself: Keycloak login, connecting the dolibarr server, a chat."""
 import base64
 import hashlib
 import html
 import json
+import os
 import re
 import secrets
 import time
+import uuid
 from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
@@ -14,8 +17,9 @@ from bs4 import BeautifulSoup
 
 from common import CHAT, DOLIBARR, MCP, REALM, SSO, browser, follow, form_data, page_text
 
-# The MCP client's redirect URI, on restoauth's redirect allowlist (compose.yaml). Nothing answers at
-# this address: the flows stop at the redirect and read code, state and iss from it, as a client would.
+# The MCP client's redirect URI, on restoauth's redirect allowlist (compose.yaml): LibreChat's callback
+# for the MCP server named dolibarr. The Connection flows stop at the redirect and read code, state and
+# iss from it, as a client would; the LibreChat flows let LibreChat's browser session open it.
 CALLBACK = f"{CHAT}/api/mcp/dolibarr/oauth/callback"
 API = f"{DOLIBARR}/api/index.php"
 _KEYCLOAK_AUTH = re.compile(re.escape(f"{SSO}/realms/{REALM}/protocol/openid-connect/auth") + r"[^\"'\s<>]*")
@@ -193,3 +197,98 @@ def wait_for_mcp_401(access_token: str, seconds: int) -> int:
         if time.time() - start > seconds:
             raise AssertionError(f"MCP server still accepts the token after {seconds} s")
         time.sleep(2)
+
+
+class LibreChat:
+    """A LibreChat user in a browser: Keycloak login, connecting the dolibarr server, chatting."""
+
+    def __init__(self, user: str, pwd: str):
+        self.b = browser()
+        self.user, self.pwd = user, pwd
+        self.h: dict = {}
+        self.pkce = None
+
+    def login(self) -> dict:
+        cfg = self.b.get(f"{CHAT}/api/config").json()
+        assert cfg.get("openidLoginEnabled"), "no Sign in with Keycloak in LibreChat"
+        r = self.b.get(f"{CHAT}/oauth/openid", allow_redirects=False)
+        q = parse_qs(urlparse(r.headers.get("Location", "")).query)
+        self.pkce = q.get("code_challenge_method", [None])[0]
+        r = follow(self.b, r)
+        form = BeautifulSoup(r.text, "lxml").find("form", id="kc-form-login")
+        assert form is not None, f"no Keycloak login form: {r.status_code} {r.url}"
+        d = form_data(form)
+        d.update({"username": self.user, "password": self.pwd, "credentialId": ""})
+        r = follow(self.b, self.b.post(form["action"], data=d, allow_redirects=False))
+        if "error=" in r.url:
+            raise AssertionError(f"LibreChat login failed: {r.url}")
+        tok = self.b.post(f"{CHAT}/api/auth/refresh")
+        assert tok.status_code == 200 and tok.headers.get("content-type", "").startswith("application/json"), \
+            f"no LibreChat session: {tok.status_code} {tok.text[:150]}"
+        self.h = {"Authorization": "Bearer " + tok.json()["token"]}
+        return tok.json()["user"]
+
+    def config(self) -> dict:
+        return self.b.get(f"{CHAT}/api/config", headers=self.h).json()
+
+    def connect_dolibarr(self) -> dict:
+        """Connect icon -> Continue with OAuth: Dolibarr login (through Keycloak) -> consent -> allow.
+        Returns LibreChat's connection status, the consent page text (None if already connected) and
+        the login pages passed on the way."""
+        r = self.b.post(f"{CHAT}/api/mcp/dolibarr/reinitialize", headers=self.h, json={})
+        assert r.status_code == 200, f"reinitialize {r.status_code} {r.text[:200]}"
+        data = r.json()
+        consent_text = None
+        seen: list[str] = []
+        if data.get("oauthUrl"):
+            r = follow(self.b, self.b.get(data["oauthUrl"], allow_redirects=False), CALLBACK)
+            where, r = browse_to_consent(self.b, r, self.user, self.pwd, seen)
+            assert where == "consent", f"expected the consent page, got the callback {r}"
+            consent_text = page_text(r.text, 5000)
+            cb = decide(self.b, r, "allow")
+            assert isinstance(cb, str), f"consent did not lead back to LibreChat: {page_text(cb.text, 300)}"
+            self.b.get(cb)  # the browser opens LibreChat's callback; LibreChat exchanges the code
+        s: dict = {}
+        for _ in range(20):
+            st = self.b.get(f"{CHAT}/api/mcp/connection/status", headers=self.h).json()
+            s = st.get("connectionStatus", {}).get("dolibarr", {})
+            if s.get("connectionState") == "connected":
+                return {"consent": consent_text, "seen": seen, **s}
+            time.sleep(1)
+        raise AssertionError(f"dolibarr not connected: {s}")
+
+    def ask(self, question: str, spec: dict) -> tuple[list, str]:
+        """New chat with the given model spec; returns (tool calls, answer text)."""
+        preset = spec["preset"]
+        body = {
+            "text": question, "sender": "User", "isCreatedByUser": True,
+            "parentMessageId": "00000000-0000-0000-0000-000000000000", "conversationId": None,
+            "messageId": str(uuid.uuid4()), "error": False, "endpoint": preset["endpoint"],
+            "endpointType": "custom", "model": preset["model"], "spec": spec["name"], "key": None,
+            "isContinued": False, "isTemporary": False,
+            "ephemeralAgent": {"mcp": spec.get("mcpServers", []), "execute_code": False, "web_search": False,
+                               "file_search": False},
+        }
+        r = self.b.post(f"{CHAT}/api/agents/chat/{preset['endpoint']}", headers=self.h, json=body)
+        d = r.json()
+        r = self.b.get(f"{CHAT}/api/agents/chat/stream/{d['streamId']}", headers=self.h, stream=True, timeout=180)
+        final = None
+        for line in r.iter_lines(decode_unicode=True):
+            if line and line.startswith("data:"):
+                try:
+                    ev = json.loads(line[5:].strip())
+                except json.JSONDecodeError:
+                    continue
+                if ev.get("final"):
+                    final = ev
+                    break
+        msg = (final or {}).get("responseMessage") or {}
+        parts = msg.get("content") or []
+        calls = [p["tool_call"] for p in parts if p.get("type") == "tool_call"]
+        text = (msg.get("text") or "") + "".join(p.get("text", "") for p in parts if p.get("type") == "text")
+        return calls, text
+
+
+def llm_key_present() -> bool:
+    """An LLM key from llm.env (any *_KEY). GPG_KEY is set by the Python base image, not by llm.env."""
+    return any(v for k, v in os.environ.items() if k.endswith("_KEY") and k != "GPG_KEY")

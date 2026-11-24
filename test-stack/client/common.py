@@ -18,6 +18,7 @@ ISSUER = f"{DOLIBARR}/custom/restoauth"
 DOLIBARR_ADMIN = ("admin", "Test-Admin-Pw1!")
 KC_ADMIN = ("admin", "test-kc-admin-pw")
 KC_SECRET_DOLIBARR = "test-secret-dolibarr-client-0123456789"
+KC_SECRET_LIBRECHAT = "test-secret-librechat-client-0123456789"
 # Keycloak users; the Dolibarr login is the same name (preferred_username). Rights: see README.
 KC_USERS = [
     ("anna", "Test-Anna-Pw1!", "Anna", "Agent", "anna@example.com"),
@@ -25,13 +26,18 @@ KC_USERS = [
     ("carl", "Test-Carl-Pw1!", "Carl", "Sales", "carl@example.com"),
 ]
 
+# LibreChat refuses requests without a browser User-Agent ("Illegal request").
+BROWSER_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
 
 def say(*a):
     print(*a, flush=True)
 
 
 def browser() -> requests.Session:
-    return requests.Session()
+    b = requests.Session()
+    b.headers["User-Agent"] = BROWSER_UA
+    return b
 
 
 def page_text(html: str, n: int = 600) -> str:
