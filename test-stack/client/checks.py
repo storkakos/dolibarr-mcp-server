@@ -2,7 +2,10 @@
 refreshes, gets caught reusing a refresh token, revokes; then the MCP server's tools run as two
 connected users with different rights, and a user without the connect right is turned away. Then the
 three ways a connection ends: the user is disabled, the user ends it on their user card, the access
-token expires (the stack sets a short access token lifetime).
+token expires (the stack sets a short access token lifetime; with a lifetime longer than EXPIRY_MAX_WAIT
+seconds, default 300, the expiry check is skipped).
+The checks find their data by name and do not count products or documents, so a Dolibarr with more data
+than the sample data (TEST_EXTRA_DATA) passes too.
 Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat users log in through
 Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
 chat checks need an LLM key in llm.env and are skipped without it).
@@ -28,6 +31,11 @@ anna, bob, carl, dave = KC_USERS
 # The MCP server keeps a token's rights for MCP_RIGHTS_CACHE_SECONDS (default 30); a revoked token is
 # refused by Dolibarr at once and by the MCP server at the latest after that.
 CACHE_WAIT = int(os.environ.get("MCP_RIGHTS_CACHE_SECONDS", "30")) + 15
+# The expiry check waits at most this long for the access token to expire by itself.
+EXPIRY_MAX_WAIT = int(os.environ.get("EXPIRY_MAX_WAIT", "300"))
+# Enough rows for a stack with some more data than the sample data (the MCP server caps lists at 50 by default).
+ROWS = 50
+SAMPLE_PRODUCTS = ["HW-ROUTER", "SRV-MAINT"]
 
 ALL_TOOLS = sorted(["whoami", "my_permissions", "list_thirdparties", "get_thirdparty", "list_invoices", "get_invoice",
                     "list_proposals", "list_orders", "list_products", "list_api_endpoints", "api_get"])
@@ -52,6 +60,18 @@ def check(name):
         print(f"{status}  {name}" + (f"  ({detail})" if detail else ""), flush=True)
         return fn
     return deco
+
+
+def thirdparties(token: str) -> dict[str, str]:
+    """Name -> id of every third party the token's user sees."""
+    rows = flows.call_json(token, "list_thirdparties", limit=ROWS)["thirdparties"]
+    return {x["name"]: str(x["id"]) for x in rows}
+
+
+def assert_sample_products(token: str) -> None:
+    for ref in SAMPLE_PRODUCTS:
+        found = [x["ref"] for x in flows.call_json(token, "list_products", search=ref)["products"]]
+        assert ref in found, (ref, found)
 
 
 def callback_error(r) -> dict:
@@ -261,18 +281,19 @@ def _():
 @check("anna reads her own customer's records only")
 def _():
     t = state["anna_tok"]
-    tps = flows.call_json(t, "list_thirdparties")["thirdparties"]
-    assert [x["name"] for x in tps] == ["North Customer Ltd"], tps
-    north = tps[0]["id"]
-    inv = flows.call_json(t, "list_invoices")["invoices"]
-    assert len(inv) == 1 and str(inv[0]["socid"]) == str(north), inv
+    tps = thirdparties(t)
+    assert "North Customer Ltd" in tps and "South Customer Inc" not in tps, tps
+    north = tps["North Customer Ltd"]
+    # Every document anna sees belongs to one of her customers, and North Customer Ltd has some.
+    for tool, key in (("list_invoices", "invoices"), ("list_proposals", "proposals"), ("list_orders", "orders")):
+        rows = flows.call_json(t, tool, limit=ROWS)[key]
+        assert rows and {str(x["socid"]) for x in rows} <= set(tps.values()), (tool, rows)
+        assert any(str(x["socid"]) == north for x in flows.call_json(t, tool, thirdparty_id=int(north))[key]), tool
+    inv = flows.call_json(t, "list_invoices", thirdparty_id=int(north))["invoices"]
+    assert inv and all(str(x["socid"]) == north for x in inv), inv
     one = flows.call_json(t, "get_invoice", id=int(inv[0]["id"]))
     assert one["ref"] == inv[0]["ref"] and one["lines"], one
-    for tool, key in (("list_proposals", "proposals"), ("list_orders", "orders")):
-        rows = flows.call_json(t, tool)[key]
-        assert len(rows) == 1 and str(rows[0]["socid"]) == str(north), (tool, rows)
-    prods = sorted(x["ref"] for x in flows.call_json(t, "list_products")["products"])
-    assert prods == ["HW-ROUTER", "SRV-MAINT"], prods
+    assert_sample_products(t)
     out = flows.call(t, "api_get", path=f"/thirdparties/{north}/outstandinginvoices")
     assert REFUSED not in out, out[:200]
     state["north"] = north
@@ -282,11 +303,12 @@ def _():
 @check("carl reads his own customer, and nothing of the invoices, proposals and orders")
 def _():
     t = state["carl_tok"]
-    tps = flows.call_json(t, "list_thirdparties")["thirdparties"]
-    assert [x["name"] for x in tps] == ["South Customer Inc"], tps
-    south = tps[0]["id"]
+    tps = thirdparties(t)
+    assert "South Customer Inc" in tps and "North Customer Ltd" not in tps, tps
+    assert not set(tps) & set(thirdparties(state["anna_tok"])), "anna and carl see the same customer"
+    south = tps["South Customer Inc"]
     assert flows.call_json(t, "get_thirdparty", id=int(south))["name"] == "South Customer Inc"
-    assert len(flows.call_json(t, "list_products")["products"]) == 2
+    assert_sample_products(t)
     for tool in DOCUMENT_TOOLS:
         out = flows.call(t, tool, **({"id": 1} if tool == "get_invoice" else {}))
         assert out.startswith(REFUSED), (tool, out[:200])
@@ -322,7 +344,8 @@ def _():
 @check("anna's own Dolibarr API key works at Dolibarr's REST API, but the MCP server refuses it with 401")
 def _():
     r = requests.get(f"{flows.API}/thirdparties", headers={"DOLAPIKEY": ANNA_API_KEY})
-    assert r.status_code == 200 and [x["name"] for x in r.json()] == ["North Customer Ltd"], \
+    names = [x["name"] for x in r.json()] if r.status_code == 200 else []
+    assert "North Customer Ltd" in names and "South Customer Inc" not in names, \
         f"Dolibarr /thirdparties with anna's API key: {r.status_code} {r.text[:200]}"
     # What the MCP server sees: restoauth/me knows the key's user, but it is no restoauth token.
     me = flows.dolibarr_me(ANNA_API_KEY)
@@ -361,14 +384,15 @@ def before_expiry(tok: dict, issued: float, what: str) -> None:
     assert time.time() < issued + int(tok["expires_in"]), f"{what} only after the access token expired by itself"
 
 
-@check("expiry: a new connection gets a short-lived access token (stack setting) that works")
+@check("expiry: a new connection gets an access token of the configured lifetime that works")
 def _():
     tok = state["anna"].tokens()
     state["exp"], state["exp_issued"] = tok, time.time()
-    assert int(tok["expires_in"]) <= 120, f"expires_in {tok['expires_in']}: the stack's short lifetime is not set"
+    assert int(tok["expires_in"]) > 0, f"expires_in {tok.get('expires_in')}"
     assert flows.call_json(tok["access_token"], "whoami")["user"] == "Anna Agent (anna)"
     assert flows.dolibarr_me(tok["access_token"]).status_code == 200
-    return f"expires_in {tok['expires_in']} s; checked again after the next checks"
+    later = "checked again after the next checks" if int(tok["expires_in"]) <= EXPIRY_MAX_WAIT         else f"longer than EXPIRY_MAX_WAIT ({EXPIRY_MAX_WAIT} s), the expiry check will be skipped"
+    return f"expires_in {tok['expires_in']} s; {later}"
 
 
 @check("disabled user: every connection ends at once (gone from the user card, access token 401, refresh invalid_grant)")
@@ -449,6 +473,9 @@ def _():
 @check("expiry: the expired access token is refused at Dolibarr and the MCP server; refresh gives a working one")
 def _():
     tok = state["exp"]
+    if int(tok["expires_in"]) > EXPIRY_MAX_WAIT:
+        return (f"SKIP access token lifetime {tok['expires_in']} s is longer than EXPIRY_MAX_WAIT "
+                f"({EXPIRY_MAX_WAIT} s); the test stack sets 60 s (TEST_ACCESS_TOKEN_LIFETIME)")
     wait = state["exp_issued"] + int(tok["expires_in"]) + 2 - time.time()
     if wait > 0:
         time.sleep(wait)
