@@ -72,6 +72,38 @@ docker compose up -d librechat        # pick up the key
 For another provider, change the endpoint in `librechat/librechat.yaml` and the key name in
 `llm.env`. Without `llm.env`, `checks.py` skips the two chat checks and says so.
 
+## Screenshots
+
+The screenshots in [`docs/quick-start.md`](../docs/quick-start.md) and
+[`docs/user-guide.md`](../docs/user-guide.md) come from this stack. `screenshots/shoot.py` takes
+them again, for example after a UI change in LibreChat, Dolibarr or restoauth: a headless Chromium
+(Playwright) in the stack's network logs in as the test users, connects the Dolibarr assistant in
+LibreChat, asks it the questions shown in the guides, and ends a connection on a user card. It writes
+1280 pixel wide PNG files straight into `docs/images/quick-start/` and `docs/images/user-guide/`,
+replacing the files there.
+
+It needs the [LLM key](#llm-key) and a **freshly started stack**: the pictures show an empty chat
+history and users who have not connected yet, and the script ends `anna`'s connection.
+
+```sh
+docker compose down -v && docker compose up -d --build   # fresh stack
+docker compose logs -f setup                             # wait for "setup complete"
+docker compose run --rm --build screenshots              # about five minutes
+```
+
+`docker compose run --rm --build screenshots python shoot.py anna carl` takes only some parts (`admin`,
+`anna`, `carl`, `bob`; see the top of `shoot.py`), on a fresh stack as well. On a failure, the
+script saves the open pages as PNG and HTML in `docs/images/debug/` (git-ignored, not part of the
+docs).
+
+The model's answers differ from run to run. Look at every picture before you commit it: the
+questions must be answered from a tool call (**Ran ... in dolibarr**), and only the example
+hostnames and test users may be visible. LibreChat allows about 7 logins per 5 minutes; the script
+needs three, so wait five minutes between two runs.
+
+On the test VM, run it under your own project name, with `TEST_TAG=$RUN docker compose -p $RUN run
+--rm screenshots`, then copy `docs/images/` back to your checkout (see `docs/agents/test-vm.md`).
+
 ## Stop
 
 ```sh
