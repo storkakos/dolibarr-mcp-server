@@ -8,7 +8,10 @@ The checks find their data by name and do not count products or documents, so a 
 than the sample data (TEST_EXTRA_DATA) passes too.
 Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat users log in through
 Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
-chat checks need an LLM key in llm.env and are skipped without it).
+chat checks need an LLM key in llm.env and are skipped without it); the Keycloak setup run again keeps
+client settings it does not own; after a LibreChat logout Keycloak asks for a password and another user
+logs in. Three LibreChat logins in all; LibreChat counts two requests per login against its limit of seven
+per five minutes, and a login that would hit the limit waits for the window instead of failing.
 Last the reverse proxy: restoauth's discovery URLs, and in the nginx variant (compose.nginx.yaml) the MCP
 server under a path prefix (skipped behind Caddy).
 Reports each check as PASS, FAIL or SKIP; exit code 1 if any check failed.
@@ -27,7 +30,8 @@ from urllib.parse import urlparse
 import requests
 
 import flows
-from common import ANNA_API_KEY, DOLIBARR, ISSUER, KC_USERS, MCP
+import keycloak_realm
+from common import ANNA_API_KEY, CHAT, DOLIBARR, ISSUER, KC_USERS, MCP, REALM, SSO, kc_admin
 
 results = []
 state: dict = {}
@@ -505,7 +509,7 @@ def _librechat(user):
     me = lc.login()
     assert me.get("email") == user[4], me
     chats[user[0]] = lc
-    return f"{me.get('name')} <{me.get('email')}>, PKCE {lc.pkce}"
+    return f"{me.get('name')} <{me.get('email')}>, PKCE {lc.pkce}, LibreChat login requests left {lc.login_budget}"
 
 
 def _connect(user):
@@ -557,6 +561,57 @@ def _():
     _librechat(carl)
     _connect(carl)
     return _whoami_chat(carl)
+
+
+@check("example setup: running the Keycloak setup again keeps client settings it does not own")
+def _():
+    # Another stack's or an admin's settings on the librechat client, then the stack's own setup again.
+    kc = kc_admin()
+    base = f"{SSO}/admin/realms/{REALM}/clients"
+    url = f"{base}/{kc.get(base, params={'clientId': 'librechat'}).json()[0]['id']}"
+    other = "https://other.example.com"
+    rep = kc.get(url).json()
+    rep["attributes"]["test.foreign.attribute"] = "kept"
+    rep["attributes"]["post.logout.redirect.uris"] += f"##{other}/login"
+    rep["redirectUris"] = rep["redirectUris"] + [f"{other}/callback"]
+    assert kc.put(url, json=rep).status_code == 204
+    try:
+        keycloak_realm.setup_realm()
+        after = kc.get(url).json()
+        logout_uris = after["attributes"].get("post.logout.redirect.uris", "").split("##")
+        assert after["attributes"].get("test.foreign.attribute") == "kept", after["attributes"]
+        assert f"{other}/login" in logout_uris and f"{CHAT}/login" in logout_uris, logout_uris
+        assert f"{other}/callback" in after["redirectUris"]             and f"{CHAT}/oauth/openid/callback" in after["redirectUris"], after["redirectUris"]
+    finally:  # back to the stack's own settings
+        rep = kc.get(url).json()
+        rep["attributes"]["test.foreign.attribute"] = ""  # an empty value removes the attribute
+        rep["attributes"]["post.logout.redirect.uris"] = "##".join(
+            x for x in rep["attributes"]["post.logout.redirect.uris"].split("##") if not x.startswith(other))
+        rep["redirectUris"] = [x for x in rep["redirectUris"] if not x.startswith(other)]
+        kc.put(url, json=rep)
+    return "foreign attribute, redirect URI and post-logout redirect URI kept next to the stack's own"
+
+
+@check("example 8: after a LibreChat logout Keycloak asks for a password, and another user logs in")
+def _():
+    # One more LibreChat login (bob) on top of anna's and carl's. LibreChat counts two requests per login
+    # against its limit of 7 per 5 minutes; if the budget is used up, LibreChat.login waits for the window.
+    lc = chats[carl[0]]
+    out = lc.logout()
+    assert out["end_session"] == f"{SSO}/realms/{REALM}/protocol/openid-connect/logout", out
+    assert out["landed"].startswith(f"{CHAT}/login"), f"after the logout the browser landed on {out['landed']}"
+    gone = lc.b.post(f"{CHAT}/api/auth/refresh")
+    # Without a session LibreChat answers in plain text ("Refresh token not provided"), with one in JSON.
+    assert not (gone.status_code == 200 and gone.headers.get("content-type", "").startswith("application/json")),         "LibreChat session still alive after the logout"
+    # The same browser: Sign in with Keycloak must show Keycloak's login form (LibreChat.login asserts it).
+    switch = flows.LibreChat(bob[0], bob[1])
+    switch.b = lc.b
+    me = switch.login()
+    assert me.get("email") == bob[4], me
+    return (f"Keycloak login form shown again, now {me.get('email')}"
+            + (" (Keycloak asked to confirm the logout)" if out["confirmed"] else "")
+            + f", LibreChat login requests left {switch.login_budget}"
+            + (f", waited {switch.waited} s for LibreChat's login limit" if switch.waited else ""))
 
 
 print(f"== Reverse proxy ({PROXY}): restoauth discovery, the MCP server under a path prefix")
