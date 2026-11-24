@@ -63,6 +63,8 @@ services:
       TEST_OIDC_CLIENT_SECRET: test-secret-dolibarr-client-0123456789   # test value
       # Short access token lifetime (restoauth's minimum, default 3600) for the expiry check
       TEST_ACCESS_TOKEN_LIFETIME: "60"
+      # anna's own Dolibarr API key, for the check that the MCP server refuses plain API keys
+      TEST_ANNA_API_KEY: test-anna-api-key-0123456789abcdef0123   # test value
     volumes:
       - dolibarr-documents:/var/www/documents
       - dolibarr-custom:/var/www/html/custom

@@ -8,7 +8,9 @@
   host from MCP_RESOURCE_URL is accepted in the Host header; other hosts get 421 and foreign origins 403
   (DNS-rebinding protection), on every route and before the token is checked.
 - Token check via GET /api/index.php/restoauth/me: returns user, rights and token expiry. The result is kept
-  in memory only, for at most CACHE_SECONDS.
+  in memory only, for at most CACHE_SECONDS. Only restoauth access tokens are accepted: restoauth/me also
+  answers for a plain Dolibarr API key (its "token" is then null); such a bearer gets 401, never reaches
+  a tool and leaves an audit line.
 - Rights: which rights a path needs comes from the default rule plus the exceptions in the module's
   rights_map.json (delivered with /restoauth/me). On top of that the server keeps its own stricter rules
   (STRICTER_PATHS), where Dolibarr itself is too lax. Tools the user has no right for are not offered, and a
@@ -135,9 +137,10 @@ async def _me(token: str) -> dict | None:
     if hit and hit[0] > now:
         return hit[1]
     me = await _fetch_me(token)
-    if me is None:
+    if me is None or not _is_restoauth_token(me):
+        # A plain API key is not kept either: the verifier refuses it on every request.
         _me_cache.pop(key, None)
-        return None
+        return me
     until = now + CACHE_SECONDS
     exp = (me.get("token") or {}).get("expires_at")
     if exp:
@@ -149,14 +152,26 @@ async def _me(token: str) -> dict | None:
     return me
 
 
+def _is_restoauth_token(me: dict) -> bool:
+    """restoauth/me describes the bearer under "token" only if it is a restoauth access token. For a
+    plain Dolibarr API key (DOLAPIKEY) the user is found too, but "token" is null."""
+    tok = me.get("token")
+    return isinstance(tok, dict) and tok.get("type") == "restoauth"
+
+
 class DolibarrTokenVerifier(TokenVerifier):
-    """Checks the bearer token with Dolibarr (restoauth/me), including its expiry."""
+    """Checks the bearer token with Dolibarr (restoauth/me), including its expiry. Accepts only restoauth
+    access tokens, never a user's plain Dolibarr API key."""
 
     async def verify_token(self, token: str) -> AccessToken | None:
         if not token or len(token) > 512:
             return None
         me = await _me(token)
         if not me:
+            return None
+        if not _is_restoauth_token(me):
+            log.info("Token rejected (%s): not a restoauth access token", _token_id(token))
+            _audit_refused_bearer(token, me)
             return None
         tok = me.get("token") or {}
         exp = tok.get("expires_at")
@@ -403,6 +418,24 @@ def _audit(call: _ToolCall, ok: bool, info: str = "") -> None:
         "ok": ok,
         "info": _redact(info)[:300],
     }
+    _write_audit(entry)
+
+
+def _audit_refused_bearer(token: str, me: dict) -> None:
+    """Audit line for a bearer that Dolibarr knows but that is not a restoauth access token (a plain API
+    key). The request gets 401 before any tool runs, so "tool" is null; the key itself is never written."""
+    _write_audit({
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "user": (me.get("user") or {}).get("login") or "?",
+        "token": _token_id(token),
+        "tool": None,
+        "args": {},
+        "ok": False,
+        "info": "refused: not a restoauth access token",
+    })
+
+
+def _write_audit(entry: dict) -> None:
     AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
     with AUDIT_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")

@@ -62,7 +62,7 @@ then sends the client back with `invalid_target` ("Resource is not allowed").
 # 1. Get a released version
 git clone https://github.com/storkakos/dolibarr-mcp-server.git
 cd dolibarr-mcp-server
-git checkout v0.1.0
+git checkout v0.1.1
 
 # 2. Configure: set DOLIBARR_URL, DOLIBARR_OAUTH_ISSUER and MCP_RESOURCE_URL
 cp .env.example .env
@@ -271,7 +271,7 @@ docker compose up -d --build
 
 The server keeps no state, so nothing needs migrating either way. `.env`, `compose.override.yaml`,
 `logs/` and `certs/` are not tracked by git and stay as they are. Read the release notes of the new
-version for new or changed settings in `.env.example`, and for the restoauth version it was tested
+version ([CHANGELOG.md](CHANGELOG.md)) for new or changed settings in `.env.example`, and for the restoauth version it was tested
 with. restoauth is updated separately, inside Dolibarr, from its release ZIP (see its
 [README](https://github.com/storkakos/dolibarr-restoauth#install)).
 
@@ -280,8 +280,10 @@ with. restoauth is updated separately, inside Dolibarr, from its release ZIP (se
 Every tool call appends exactly one JSON line to `logs/mcp-dolibarr-audit.log` on the host
 (`MCP_LOG_DIR`): also calls the server refuses (invalid input, missing right, arguments that do not
 fit the tool), calls where Dolibarr is unreachable or answers with an error, and calls that are
-cancelled while they run. This covers the generic `api_get` tool as well. The file survives
-container recreation and updates.
+cancelled while they run. This covers the generic `api_get` tool as well. A bearer that Dolibarr knows
+but that is not a restoauth access token (a user's plain API key) also gets a line, with `"tool": null`,
+although the request ends with `401` before any tool runs. The file survives container recreation and
+updates.
 
 ```json
 {"ts": "2026-11-23T09:14:02", "user": "jdoe", "token": "3f9a1c0e7b2d", "tool": "list_invoices", "args": {"status": "unpaid"}, "ok": true, "info": ""}
@@ -292,10 +294,10 @@ container recreation and updates.
 | `ts` | Time of the call in the container's time zone (UTC unless you set `TZ`) |
 | `user` | Dolibarr login the token belongs to (from `restoauth/me`); `?` if it cannot be looked up |
 | `token` | Short, non-reversible hash of the token, to tell sessions apart. Never the token itself. |
-| `tool` | Tool name |
+| `tool` | Tool name; `null` for a refused bearer that is not a restoauth access token |
 | `args` | Arguments as the client sent them; the caller's token, long token-like strings and values after secret-looking names (`password=`, `Bearer`, `DOLAPIKEY=`, ...) are masked as `***` |
 | `ok` | `true` only if the call was not refused and **every** Dolibarr request of the call succeeded |
-| `info` | Empty when `ok` is `true`. Otherwise `refused: ...` (invalid input or missing right; Dolibarr was not asked for data), Dolibarr's error (`Dolibarr HTTP 500 ...`, `No permission in Dolibarr (HTTP 403)`, `Dolibarr not reachable: ...`), the SDK's error for unfitting arguments, or `cancelled`. Shortened and masked like `args`. |
+| `info` | Empty when `ok` is `true`. Otherwise `refused: ...` (invalid input, missing right, or `refused: not a restoauth access token`; Dolibarr was not asked for data), Dolibarr's error (`Dolibarr HTTP 500 ...`, `No permission in Dolibarr (HTTP 403)`, `Dolibarr not reachable: ...`), the SDK's error for unfitting arguments, or `cancelled`. Shortened and masked like `args`. |
 
 **Rotation is your job.** The server only appends and never rotates or deletes the file. Use
 logrotate with `copytruncate`, and keep the files as long as your audit rules require.
@@ -316,6 +318,11 @@ expiry, and then calls Dolibarr's REST API with the same token. A request withou
 [protected resource metadata](https://www.rfc-editor.org/rfc/rfc9728) and from there to restoauth.
 An expired, revoked or refreshed-away token, or the token of a user who was disabled in Dolibarr, is
 refused as soon as Dolibarr refuses it and the cached answer has run out.
+
+Only restoauth access tokens are accepted. A user's own Dolibarr API key (`DOLAPIKEY`) sent as a
+bearer token gets the same `401` challenge and is never forwarded to Dolibarr for a tool call, although
+it keeps working at Dolibarr's REST API directly for other integrations. See
+[Which tokens the MCP server accepts](docs/setup/dolibarr-prerequisites.md#which-tokens-the-mcp-server-accepts).
 
 All tools only read. Every call runs with the caller's own Dolibarr token and rights.
 
@@ -361,7 +368,9 @@ the audit log check and does **not** mean a successful start; look at the lines 
 
 **Every request gets `401`, even with a token.** `docker compose logs` shows why the token check
 failed: `Token rejected (...): HTTP 401` means Dolibarr refused the token (expired, revoked, ended on
-the user card, or the user is disabled); `HTTP 503` on every token usually means `API_IN_TOKEN_TABLE`
+the user card, or the user is disabled); `not a restoauth access token` means the client sent a
+plain Dolibarr API key instead of a token from restoauth (connect through the MCP client's OAuth flow
+instead); `HTTP 503` on every token usually means `API_IN_TOKEN_TABLE`
 is switched on in Dolibarr 23 (turn it off, see the
 [Dolibarr prerequisites](docs/setup/dolibarr-prerequisites.md)); any other status usually means
 `DOLIBARR_URL` is wrong or API REST or restoauth is not enabled (check 1 and 2 of the
