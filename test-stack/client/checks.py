@@ -1,6 +1,8 @@
 """TEST ONLY. End to end: an MCP client connects through restoauth (Keycloak login, consent, PKCE),
 refreshes, gets caught reusing a refresh token, revokes; then the MCP server's tools run as two
-connected users with different rights, and a user without the connect right is turned away.
+connected users with different rights, and a user without the connect right is turned away. Then the
+three ways a connection ends: the user is disabled, the user ends it on their user card, the access
+token expires (the stack sets a short access token lifetime).
 Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat users log in through
 Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
 chat checks need an LLM key in llm.env and are skipped without it).
@@ -12,6 +14,7 @@ Later checks use what earlier ones set up (tokens, record ids); after a failure 
 """
 import os
 import sys
+import time
 import traceback
 
 import requests
@@ -21,7 +24,7 @@ from common import ISSUER, KC_USERS, MCP
 
 results = []
 state: dict = {}
-anna, bob, carl = KC_USERS
+anna, bob, carl, dave = KC_USERS
 # The MCP server keeps a token's rights for MCP_RIGHTS_CACHE_SECONDS (default 30); a revoked token is
 # refused by Dolibarr at once and by the MCP server at the latest after that.
 CACHE_WAIT = int(os.environ.get("MCP_RIGHTS_CACHE_SECONDS", "30")) + 15
@@ -314,6 +317,132 @@ def _():
     r = requests.get(f"{flows.API}/invoices", headers={"Authorization": f"Bearer {state['carl_tok']}"})
     assert r.status_code in (401, 403), f"Dolibarr gave carl the invoices: {r.status_code}"
     return f"Dolibarr answers carl's /invoices with {r.status_code}"
+
+
+print("== How a connection ends: user disabled, connection ended on the user card, access token expired")
+
+
+def connection_of(access_token: str) -> tuple[int, str]:
+    """(Dolibarr user id, connection id) of a token, from restoauth/me."""
+    me = flows.dolibarr_me(access_token)
+    assert me.status_code == 200, f"restoauth/me {me.status_code}"
+    return int(me.json()["user"]["id"]), me.json()["token"]["connection"]
+
+
+def refresh(tok: dict) -> requests.Response:
+    return flows.token(state["asm"], grant_type="refresh_token", refresh_token=tok["refresh_token"],
+                       client_id=state["client_id"])
+
+
+def assert_refresh_refused(tok: dict) -> None:
+    r = refresh(tok)
+    assert r.status_code == 400 and r.json().get("error") == "invalid_grant", f"refresh: {r.status_code} {r.text[:200]}"
+
+
+def before_expiry(tok: dict, issued: float, what: str) -> None:
+    """A refusal only proves something while the access token has not expired by itself."""
+    assert time.time() < issued + int(tok["expires_in"]), f"{what} only after the access token expired by itself"
+
+
+@check("expiry: a new connection gets a short-lived access token (stack setting) that works")
+def _():
+    tok = state["anna"].tokens()
+    state["exp"], state["exp_issued"] = tok, time.time()
+    assert int(tok["expires_in"]) <= 120, f"expires_in {tok['expires_in']}: the stack's short lifetime is not set"
+    assert flows.call_json(tok["access_token"], "whoami")["user"] == "Anna Agent (anna)"
+    assert flows.dolibarr_me(tok["access_token"]).status_code == 200
+    return f"expires_in {tok['expires_in']} s; checked again after the next checks"
+
+
+@check("disabled user: every connection ends at once (gone from the user card, access token 401, refresh invalid_grant)")
+def _():
+    admin = flows.DolibarrAdmin()
+    dave_id = admin.user_id(dave[0])
+    if flows.user_status(admin.user_card(dave_id).text) != "Enabled":
+        admin.set_enabled(dave_id, True)  # left disabled by an interrupted earlier run
+    con = flows.Connection(state["prm"], state["asm"], state["client_id"], dave[0], dave[1])
+    used, untouched = con.tokens(), con.tokens()
+    issued = time.time()
+    assert flows.call_json(used["access_token"], "whoami")["user"] == "Dave Leaver (dave)"
+    uid, used_conn = connection_of(used["access_token"])
+    _, untouched_conn = connection_of(untouched["access_token"])
+    assert uid == dave_id, (uid, dave_id)
+    _, links = flows.connected_apps(admin.b, dave_id)
+    assert {used_conn, untouched_conn} <= set(links), f"connections not listed before: {sorted(links)}"
+    state.update(admin=admin, dave_id=dave_id, dave_used=used, dave_untouched=untouched, dave_issued=issued)
+
+    admin.set_enabled(dave_id, False)
+    # Before any of the tokens is used again: restoauth has already ended both connections.
+    _, links = flows.connected_apps(admin.b, dave_id)
+    assert not links, f"connections still listed for the disabled user: {sorted(links)}"
+    assert flows.dolibarr_me(used["access_token"]).status_code == 401, "access token still valid at Dolibarr"
+    assert_refresh_refused(used)
+    before_expiry(used, issued, "refused")
+    return "no connection on the user card, Dolibarr 401, refresh invalid_grant"
+
+
+@check("disabled user: enabling the user again does not revive the old tokens")
+def _():
+    admin, dave_id = state["admin"], state["dave_id"]
+    admin.set_enabled(dave_id, True)
+    for name in ("dave_used", "dave_untouched"):
+        assert flows.dolibarr_me(state[name]["access_token"]).status_code == 401, f"{name}: access token works again"
+    assert_refresh_refused(state["dave_untouched"])
+    before_expiry(state["dave_untouched"], state["dave_issued"], "refused")
+    _, links = flows.connected_apps(admin.b, dave_id)
+    assert not links, f"connections listed again after enabling: {sorted(links)}"
+    return "both connections stay dead, also the one not used while disabled"
+
+
+@check("disabled user: the MCP server refuses the token after its rights cache")
+def _():
+    took = flows.wait_for_mcp_401(state["dave_used"]["access_token"], CACHE_WAIT)
+    before_expiry(state["dave_used"], state["dave_issued"], "the MCP server refused")
+    return f"MCP server 401 after {took} s"
+
+
+@check("disabled user: once enabled again, the user can connect anew")
+def _():
+    con = flows.Connection(state["prm"], state["asm"], state["client_id"], dave[0], dave[1])
+    tok = con.tokens()
+    assert flows.call_json(tok["access_token"], "whoami")["user"] == "Dave Leaver (dave)"
+    return "new connection works"
+
+
+@check("user card: ending a connection removes it from the list, its tokens are refused")
+def _():
+    con = state["anna"]
+    tok = con.tokens()
+    issued = time.time()
+    assert flows.call_json(tok["access_token"], "whoami")["user"] == "Anna Agent (anna)"
+    uid, conn = connection_of(tok["access_token"])
+    _, links = flows.connected_apps(con.b, uid)
+    assert conn in links, f"connection not on anna's user card: {sorted(links)}"
+    r = con.b.get(links[conn])
+    assert r.status_code == 200, f"revoke {r.status_code}"
+    _, links = flows.connected_apps(con.b, uid)
+    assert conn not in links, "the connection is still listed"
+    assert flows.dolibarr_me(tok["access_token"]).status_code == 401, "access token still valid at Dolibarr"
+    assert_refresh_refused(tok)
+    took = flows.wait_for_mcp_401(tok["access_token"], CACHE_WAIT)
+    before_expiry(tok, issued, "the MCP server refused")
+    return f"gone from the list, Dolibarr 401 at once, refresh invalid_grant, MCP server 401 after {took} s"
+
+
+@check("expiry: the expired access token is refused at Dolibarr and the MCP server; refresh gives a working one")
+def _():
+    tok = state["exp"]
+    wait = state["exp_issued"] + int(tok["expires_in"]) + 2 - time.time()
+    if wait > 0:
+        time.sleep(wait)
+    assert flows.dolibarr_me(tok["access_token"]).status_code == 401, "expired access token still valid at Dolibarr"
+    flows.wait_for_mcp_401(tok["access_token"], 5)
+    r = refresh(tok)
+    assert r.status_code == 200, f"refresh {r.status_code} {r.text[:200]}"
+    new = r.json()["access_token"]
+    assert flows.dolibarr_me(new).status_code == 200
+    assert flows.call_json(new, "whoami")["user"] == "Anna Agent (anna)"
+    return f"waited {max(0, int(wait))} s more; Dolibarr and MCP server 401, the refreshed token works at both"
 
 
 print("== Example setup: LibreChat (docs/setup/example-keycloak-librechat.md)")

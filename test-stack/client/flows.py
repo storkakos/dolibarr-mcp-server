@@ -1,6 +1,7 @@
 """TEST ONLY. Browser flows: an MCP client (like LibreChat) connecting through restoauth, with the
 Dolibarr login through Keycloak and restoauth's consent page, and MCP calls with the token it gets;
-then LibreChat itself: Keycloak login, connecting the dolibarr server, a chat."""
+the Dolibarr administrator and a user on the user card (disable, enable, end a connection); then
+LibreChat itself: Keycloak login, connecting the dolibarr server, a chat."""
 import base64
 import hashlib
 import html
@@ -15,7 +16,7 @@ from urllib.parse import parse_qs, urljoin, urlparse
 import requests
 from bs4 import BeautifulSoup
 
-from common import CHAT, DOLIBARR, MCP, REALM, SSO, browser, follow, form_data, page_text
+from common import CHAT, DOLIBARR, DOLIBARR_ADMIN, MCP, REALM, SSO, browser, follow, form_data, page_text
 
 # The MCP client's redirect URI, on restoauth's redirect allowlist (compose.yaml): LibreChat's callback
 # for the MCP server named dolibarr. The Connection flows stop at the redirect and read code, state and
@@ -197,6 +198,73 @@ def wait_for_mcp_401(access_token: str, seconds: int) -> int:
         if time.time() - start > seconds:
             raise AssertionError(f"MCP server still accepts the token after {seconds} s")
         time.sleep(2)
+
+
+def _csrf(text: str) -> str:
+    """Dolibarr's CSRF token of the page, as its own links and forms carry it."""
+    m = re.search(r'[?&;]token=([0-9a-f]{16,})', text) or re.search(r'name="token" value="([0-9a-f]{16,})"', text)
+    assert m, "no CSRF token on the page"
+    return m.group(1)
+
+
+def user_status(text: str) -> str:
+    """The status badge of a user card: Enabled or Disabled."""
+    m = re.search(r'class="badge badge-status\d+ badge-status" title="([^"]+)"', text)
+    assert m, "no status badge on the user card"
+    return m.group(1)
+
+
+class DolibarrAdmin:
+    """The Dolibarr administrator in a browser, logged in with Dolibarr's own login form."""
+
+    def __init__(self):
+        self.b = browser()
+        r = follow(self.b, self.b.get(f"{DOLIBARR}/index.php", allow_redirects=False))
+        form = next((f for f in BeautifulSoup(r.text, "lxml").find_all("form")
+                     if f.find("input", attrs={"name": "username"})), None)
+        assert form is not None, f"no login form: {r.status_code} {r.url}"
+        d = form_data(form)
+        d.update(username=DOLIBARR_ADMIN[0], password=DOLIBARR_ADMIN[1])
+        r = follow(self.b, self.b.post(urljoin(r.url, form.get("action") or r.url), data=d, allow_redirects=False))
+        assert "logout.php" in r.text, f"admin login failed: {page_text(r.text, 300)}"
+
+    def user_id(self, login: str) -> int:
+        r = self.b.get(f"{DOLIBARR}/user/list.php", params={"search_login": login})
+        for a in BeautifulSoup(r.text, "lxml").find_all("a", href=re.compile(r"/user/card\.php\?id=\d+")):
+            if a.get_text(strip=True) == login:
+                return int(re.search(r"id=(\d+)", a["href"]).group(1))
+        raise AssertionError(f"user {login} not in the user list")
+
+    def user_card(self, user_id: int):
+        r = self.b.get(f"{DOLIBARR}/user/card.php", params={"id": user_id})
+        assert r.status_code == 200, f"user card {r.status_code}"
+        return r
+
+    def set_enabled(self, user_id: int, enabled: bool) -> str:
+        """Disable or enable a user as on the user card (button, then Yes). Returns the new status."""
+        token = _csrf(self.user_card(user_id).text)
+        action = "confirm_enable" if enabled else "confirm_disable"
+        follow(self.b, self.b.get(f"{DOLIBARR}/user/card.php", allow_redirects=False,
+                                  params={"id": user_id, "action": action, "confirm": "yes", "token": token}))
+        status = user_status(self.user_card(user_id).text)
+        assert status == ("Enabled" if enabled else "Disabled"), f"user {user_id} is {status}"
+        return status
+
+
+def connected_apps(b: requests.Session, user_id: int):
+    """The user card's tab Connected applications (restoauth), reached through the tab link on the card.
+    Returns the page and the revoke links by connection id."""
+    card = b.get(f"{DOLIBARR}/user/card.php", params={"id": user_id})
+    m = re.search(r'href="([^"]*/restoauth/connected\.php\?id=\d+)"', card.text)
+    assert m, f"no Connected applications tab on the user card: {page_text(card.text, 300)}"
+    r = b.get(urljoin(card.url, html.unescape(m.group(1))))
+    assert r.status_code == 200, f"Connected applications {r.status_code}"
+    links = {}
+    for a in BeautifulSoup(r.text, "lxml").find_all("a", href=True):
+        q = parse_qs(urlparse(a["href"]).query)
+        if q.get("action") == ["revoke"]:
+            links[q["connection"][0]] = urljoin(r.url, a["href"])
+    return r, links
 
 
 class LibreChat:

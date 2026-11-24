@@ -12,6 +12,7 @@
  *   TEST_OIDC_ISSUER           Keycloak realm URL, e.g. https://sso.example.com/realms/example
  *   TEST_OIDC_CLIENT_ID        Keycloak client for the Dolibarr login (openid_connect)
  *   TEST_OIDC_CLIENT_SECRET    its secret (test value)
+ *   TEST_ACCESS_TOKEN_LIFETIME restoauth's access token lifetime in seconds (short, for the expiry check)
  *
  * Every password and secret in the test stack is a test value.
  */
@@ -34,13 +35,15 @@ $redirectAllowlist = array_values(array_filter(array_map('trim', explode(',', en
 $oidcIssuer = rtrim(env_required('TEST_OIDC_ISSUER'), '/');
 $oidcClientId = env_required('TEST_OIDC_CLIENT_ID');
 $oidcClientSecret = env_required('TEST_OIDC_CLIENT_SECRET');
+$accessTokenLifetime = env_required('TEST_ACCESS_TOKEN_LIFETIME');
 
 // Test users. The Dolibarr login equals the Keycloak preferred_username: Dolibarr 23 does not create
 // users on the first openid_connect login. No Dolibarr password: they log in through Keycloak only.
 // anna has the connect right and sees only the customers she is sales representative of (no
 // societe.client.voir); bob has the same read rights but not the connect right; carl has the connect
 // right but reads only third parties and products (no invoices, proposals, orders), so the end-to-end
-// checks (client/checks.py) can compare the tool lists of two connected users.
+// checks (client/checks.py) can compare the tool lists of two connected users. dave has the connect
+// right and reads third parties only; the checks disable and enable him again (how a connection ends).
 $readRights = array(
 	array('societe', 'lire'),
 	array('facture', 'lire'),
@@ -56,6 +59,8 @@ $testUsers = array(
 	'carl' => array('firstname' => 'Carl', 'lastname' => 'Sales', 'email' => 'carl@example.com',
 		'rights' => array(array('restoauth', 'connect'), array('societe', 'lire'), array('produit', 'lire')),
 		'sales_rep_of' => array('South Customer Inc')),
+	'dave' => array('firstname' => 'Dave', 'lastname' => 'Leaver', 'email' => 'dave@example.com',
+		'rights' => array(array('restoauth', 'connect'), array('societe', 'lire')), 'sales_rep_of' => array()),
 );
 
 define('NOSESSION', '1');
@@ -110,6 +115,7 @@ $consts = array(
 	'RESTOAUTH_RESOURCES' => array($mcpResource, $conf->entity),
 	'RESTOAUTH_REDIRECT_ALLOWLIST' => array(implode("\n", $redirectAllowlist), $conf->entity),
 	'RESTOAUTH_ALLOW_LOOPBACK' => array('0', $conf->entity),
+	'RESTOAUTH_ACCESS_TOKEN_LIFETIME' => array($accessTokenLifetime, $conf->entity),
 	// Log in to the web interface through Keycloak (openid_connect). Dolibarr calls the token and
 	// userinfo endpoints over HTTPS; the container trusts the test CA (50-test-stack.sh).
 	'MAIN_AUTHENTICATION_OIDC_ON' => array('1', 0),

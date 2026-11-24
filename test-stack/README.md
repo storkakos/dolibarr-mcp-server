@@ -9,7 +9,7 @@ against real software. It reproduces the validation run of
 [Example setup: Keycloak and LibreChat](../docs/setup/example-keycloak-librechat.md).
 
 It starts a TLS proxy (Caddy) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
-`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.2.1, Keycloak 26.8.2, MongoDB,
+`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.2.2, Keycloak 26.8.2, MongoDB,
 LibreChat v0.8.9 and the MCP server built from this repo. Inside the stack's network the hostnames
 point to the proxy, so no hosts file is needed.
 
@@ -43,12 +43,13 @@ docker compose run --rm client    # waits for "setup complete", then runs client
 line per check (`PASS`, `FAIL` or `SKIP`); it exits with 1 if a check failed.
 `docker compose run --rm client python checks.py -v` adds the traceback of a failed check. It takes
 about two and a half minutes, mostly waiting for the MCP server's rights cache (30 s) after a
-revocation.
+revocation; the expiry check's wait for the short access token lifetime (60 s) overlaps with those.
 
 | Part | Checks |
 |---|---|
 | OAuth flow | discovery (401 challenge, protected resource metadata, authorization server metadata at the server root); dynamic registration; authorize, Dolibarr login through Keycloak, consent page with the user's rights; token with PKCE, code used only once; the token works at the MCP server and the Dolibarr REST API; refresh with rotation (old access token dead); refresh token reuse revokes the whole connection; revoke (RFC 7009) |
 | Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
+| How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one. Each refusal is checked to happen before the token would have expired by itself |
 | Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 7) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. The two chat checks are skipped without an [LLM key](#llm-key). |
 | Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403 |
 
@@ -101,11 +102,11 @@ dolibarr-mcp-test-client:local`.
 | Dolibarr 23.0.4 from the official image; the image installs the database and the admin user | `compose.yaml` (`DOLI_*`) |
 | Apache vhost: reverse-proxy settings and the discovery rewrite rule, exactly as in the restoauth README | `dolibarr/dolibarr.conf` |
 | Trust the test CA, install restoauth from the ZIP into `htdocs/custom/restoauth` (the way Dolibarr's module upload does), on every start | `dolibarr/50-test-stack.sh` |
-| Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
+| Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, short access token lifetime, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
 | Keycloak realm `example`, clients `dolibarr` and `librechat`, test users; no self-registration, usernames cannot be changed | `client/keycloak_realm.py` (the example setup's values) |
 | LibreChat `.env` and `librechat.yaml`: Keycloak login, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
-| End-to-end checks: OAuth flow, rights and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
+| End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
 
 Differences from the example setup, all for a local test: the Keycloak realm is created (the manual
 assumes it exists); the client secrets are fixed test values instead of being copied from the
@@ -127,12 +128,13 @@ business object classes). The `setup` service starts once that step succeeded (h
 | `anna` | Keycloak; Dolibarr user `anna` | `Test-Anna-Pw1!` | connect right, read third parties, invoices, proposals, orders, products; sales representative of North Customer Ltd only |
 | `bob` | Keycloak; Dolibarr user `bob` | `Test-Bob-Pw1!` | the same read rights, **no** connect right |
 | `carl` | Keycloak; Dolibarr user `carl` | `Test-Carl-Pw1!` | connect right, read third parties and products only (no invoices, proposals, orders); sales representative of South Customer Inc only |
+| `dave` | Keycloak; Dolibarr user `dave` | `Test-Dave-Pw1!` | connect right, read third parties; sales representative of no customer. The checks disable him and enable him again |
 | `admin` | Keycloak `master` realm | `test-kc-admin-pw` | |
 
 `anna`, `bob` and `carl` also log into LibreChat with **Sign in with Keycloak**; LibreChat creates
 their accounts on the first login (by email, `<name>@example.com`).
 
-`anna`, `bob` and `carl` log in to Dolibarr through Keycloak only (button on the login page); they have no
+`anna`, `bob`, `carl` and `dave` log in to Dolibarr through Keycloak only (button on the login page); they have no
 Dolibarr password. The Dolibarr login equals the Keycloak `preferred_username`, because Dolibarr 23
 does not create users on the first `openid_connect` login. None has the right to see all
 customers, so `anna` sees only North Customer Ltd and its documents, and `carl` only South Customer
@@ -143,8 +145,9 @@ Sample data: products `SRV-MAINT` (service) and `HW-ROUTER` (product); customers
 
 restoauth settings: allowed resource `https://mcp.example.com/mcp`; redirect allowlist
 `https://chat.example.com/api/mcp/dolibarr/oauth/callback`; loopback redirects off; issuer empty
-(the module URL `https://erp.example.com/custom/restoauth`). Change them in `compose.yaml`
-(`TEST_*` of the `dolibarr` service).
+(the module URL `https://erp.example.com/custom/restoauth`); access token lifetime 60 s
+(`TEST_ACCESS_TOKEN_LIFETIME`, restoauth's minimum; the default is 3600 s) for the expiry check.
+Change them in `compose.yaml` (`TEST_*` of the `dolibarr` service).
 
 ## Reach the services with IP and port (optional)
 
