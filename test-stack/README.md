@@ -49,7 +49,7 @@ revocation; the expiry check's wait for the short access token lifetime (60 s) o
 |---|---|
 | OAuth flow | discovery (401 challenge, protected resource metadata, authorization server metadata at the server root); dynamic registration; authorize, Dolibarr login through Keycloak, consent page with the user's rights; token with PKCE, code used only once; the token works at the MCP server and the Dolibarr REST API; refresh with rotation (old access token dead); refresh token reuse revokes the whole connection; revoke (RFC 7009) |
 | Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
-| How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one. Each refusal is checked to happen before the token would have expired by itself |
+| How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one; with a lifetime longer than `EXPIRY_MAX_WAIT` (300 s) this check is reported as `SKIP` with the reason. Each refusal is checked to happen before the token would have expired by itself |
 | Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 7) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. The two chat checks are skipped without an [LLM key](#llm-key). |
 | Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403; `anna`'s own Dolibarr API key reads her third parties at Dolibarr's REST API (`DOLAPIKEY`), `restoauth/me` answers for it with `"token": null`, and the MCP server refuses it with `401` and the resource metadata challenge |
 
@@ -175,11 +175,20 @@ Inc.
 Sample data: products `SRV-MAINT` (service) and `HW-ROUTER` (product); customers North Customer Ltd
 (Hamburg) and South Customer Inc (Munich), each with one validated invoice, proposal and order.
 
+The checks find customers by name and do not count products or documents, so they also pass on a
+Dolibarr with more data: `TEST_EXTRA_DATA=6` (on `up`) adds that many extra customers, each with an
+invoice, proposal and order, and as many extra products; extra customers 1, 4, ... belong to `anna`,
+2, 5, ... to `carl`, the rest to nobody. The rights checks still prove that `anna` and `carl` see none of
+each other's customers and only documents of their own.
+
 restoauth settings: allowed resource `https://mcp.example.com/mcp`; redirect allowlist
 `https://chat.example.com/api/mcp/dolibarr/oauth/callback`; loopback redirects off; issuer empty
 (the module URL `https://erp.example.com/custom/restoauth`); access token lifetime 60 s
 (`TEST_ACCESS_TOKEN_LIFETIME`, restoauth's minimum; the default is 3600 s) for the expiry check.
-Change them in `compose.yaml` (`TEST_*` of the `dolibarr` service).
+Change them in `compose.yaml` (`TEST_*` of the `dolibarr` service). `TEST_ACCESS_TOKEN_LIFETIME` and
+`TEST_EXTRA_DATA` can also be set in the environment of `docker compose up`, e.g.
+`TEST_ACCESS_TOKEN_LIFETIME=3600 docker compose up -d`; the expiry check then reports `SKIP`, because it
+waits at most `EXPIRY_MAX_WAIT` seconds (300, set it on `docker compose run` for a longer wait).
 
 ## Reach the services with IP and port (optional)
 

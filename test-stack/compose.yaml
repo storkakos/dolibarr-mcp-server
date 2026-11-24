@@ -61,8 +61,11 @@ services:
       TEST_OIDC_ISSUER: https://sso.example.com/realms/example
       TEST_OIDC_CLIENT_ID: dolibarr
       TEST_OIDC_CLIENT_SECRET: test-secret-dolibarr-client-0123456789   # test value
-      # Short access token lifetime (restoauth's minimum, default 3600) for the expiry check
-      TEST_ACCESS_TOKEN_LIFETIME: "60"
+      # Short access token lifetime (restoauth's minimum, default 3600) for the expiry check. The checks
+      # also pass with a longer one; the expiry check is then skipped (see EXPIRY_MAX_WAIT of the client).
+      TEST_ACCESS_TOKEN_LIFETIME: "${TEST_ACCESS_TOKEN_LIFETIME:-60}"
+      # Extra customers with documents and extra products beyond the sample data (see configure.php)
+      TEST_EXTRA_DATA: "${TEST_EXTRA_DATA:-0}"
       # anna's own Dolibarr API key, for the check that the MCP server refuses plain API keys
       TEST_ANNA_API_KEY: test-anna-api-key-0123456789abcdef0123   # test value
     volumes:
@@ -169,6 +172,8 @@ services:
       - ./certs/ca.crt:/ca.crt:ro
     environment:
       REQUESTS_CA_BUNDLE: /ca.crt
+      # The expiry check waits at most this long for the access token lifetime, else it is skipped
+      EXPIRY_MAX_WAIT: "${EXPIRY_MAX_WAIT:-300}"
     env_file:
       - path: ./llm.env
         required: false
