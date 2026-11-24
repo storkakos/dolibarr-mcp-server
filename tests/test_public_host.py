@@ -6,7 +6,8 @@ Loopback keeps working for the container healthcheck. The protected resource met
 challenge always advertise the public URL, never the internal bind address. The host and origin check
 runs before the token check, on every route, so a refused request never reaches Dolibarr. Equivalent
 spellings of a host (letter case, trailing dot, IPv6 literal written differently) are the same host, on
-the configured and on the incoming side.
+the configured and on the incoming side. An IPv4 address must be a dotted quad: other spellings (127.1,
+0x7f.0.0.1, 0177.0.0.1, 2130706433) are refused on both sides with a message that says why.
 """
 from __future__ import annotations
 
@@ -205,6 +206,87 @@ def test_foreign_origin_with_trailing_dot_is_refused_with_403(mcp_server, doliba
 
     assert r.status_code == 403
     assert not _dolibarr_was_called(dolibarr)
+
+
+# --- IPv4 addresses: only the dotted quad, other spellings refused with a clear message ------
+
+DOTTED_QUAD_MESSAGE = "not written as a dotted quad"
+
+# Each of these means 127.0.0.1 to the URL standard and to inet_aton, except the last two, which are
+# no valid IPv4 address at all.
+ALTERNATIVE_LOOPBACK = ["127.1", "127.0.1", "0x7f.0.0.1", "0x7F000001", "0177.0.0.1", "127.0.0.01",
+                        "2130706433", "127.0.0.1.1", "256.0.0.1"]
+
+
+@pytest.mark.parametrize("host", ALTERNATIVE_LOOPBACK)
+def test_loopback_in_alternative_ipv4_spelling_is_refused_with_421_and_says_why(mcp_server, dolibarr, host):
+    port = mcp_server.rsplit(":", 1)[1]
+
+    for value in (f"{host}:{port}", host, f"{host}.:{port}"):
+        r = _call_whoami(mcp_server, value)
+        assert r.status_code == 421, value
+        assert DOTTED_QUAD_MESSAGE in r.text, value
+    assert not _dolibarr_was_called(dolibarr)
+
+
+@pytest.mark.parametrize("host", ["127.1", "0x7f.0.0.1", "2130706433"])
+def test_origin_in_alternative_ipv4_spelling_is_refused_with_403_and_says_why(mcp_server, dolibarr, host):
+    port = mcp_server.rsplit(":", 1)[1]
+
+    r = _call_whoami(mcp_server, f"127.0.0.1:{port}", f"http://{host}:{port}")
+
+    assert r.status_code == 403
+    assert DOTTED_QUAD_MESSAGE in r.text
+    assert not _dolibarr_was_called(dolibarr)
+
+
+@pytest.mark.parametrize("host", ["evil.test", "192.0.2.10", "127.0.0.1.example.test", "0x7f.example.test"])
+def test_unrelated_host_gets_the_plain_421(mcp_server, dolibarr, host):
+    r = _call_whoami(mcp_server, host)
+
+    assert r.status_code == 421
+    assert DOTTED_QUAD_MESSAGE not in r.text
+
+
+def test_dotted_quad_loopback_with_trailing_dot_keeps_working(mcp_server, dolibarr):
+    port = mcp_server.rsplit(":", 1)[1]
+
+    assert _call_whoami(mcp_server, f"127.0.0.1.:{port}", f"http://127.0.0.1:{port}").status_code == 200
+
+
+def test_resource_url_with_ipv4_host(start_server, dolibarr):  # noqa: F811
+    # 192.0.2.10 is also 192.0.522, 0xc0.0.2.10, 0300.0.2.10 and 3221225994 to the URL standard.
+    server = start_server(**_base(DOLIBARR_URL=dolibarr.base_url, MCP_RESOURCE_URL="https://192.0.2.10/mcp"))
+
+    for host in ("192.0.2.10", "192.0.2.10:443", "192.0.2.10.", "192.0.2.10.:443"):
+        r = _call_whoami(server.base_url, host)
+        assert r.status_code == 200, (host, r.text)
+        assert "Max Muster" in r.json()["result"]["content"][0]["text"]
+    assert _call_whoami(server.base_url, "192.0.2.10", "https://192.0.2.10").status_code == 200
+    for host in ("192.0.522", "0xc0.0.2.10", "0300.0.2.10", "192.0.2.010", "3221225994", "3221225994:443"):
+        r = _call_whoami(server.base_url, host)
+        assert r.status_code == 421, host
+        assert DOTTED_QUAD_MESSAGE in r.text, host
+    for host in ("192.0.2.11", "192.0.2.10:8443"):
+        r = _call_whoami(server.base_url, host)
+        assert r.status_code == 421, host
+        assert DOTTED_QUAD_MESSAGE not in r.text, host
+    r = _call_whoami(server.base_url, "192.0.2.10", "https://0xc0.0.2.10")
+    assert r.status_code == 403
+    assert DOTTED_QUAD_MESSAGE in r.text
+    assert _call_whoami(server.base_url, "192.0.2.10", "https://192.0.2.11").status_code == 403
+    assert (_resource_metadata_url(_challenge(server.base_url, "192.0.2.10"))
+            == "https://192.0.2.10/.well-known/oauth-protected-resource/mcp")
+
+
+@pytest.mark.parametrize("value", ["https://127.1/mcp", "https://0x7f.0.0.1/mcp", "https://0177.0.0.1:8443/mcp",
+                                   "https://2130706433/mcp", "http://192.0.2.010/mcp", "https://256.0.0.1/mcp",
+                                   "https://1.2.3.4.5/mcp", "https://192.0.522./mcp"])
+def test_resource_url_with_alternative_ipv4_spelling_stops_startup(value):
+    result = _run_until_exit(**_base(MCP_RESOURCE_URL=value))
+
+    output = _assert_stops_and_names(result, "MCP_RESOURCE_URL")
+    assert "dotted quad" in output
 
 
 # --- the host and origin check comes before the token check ----------------------------------
