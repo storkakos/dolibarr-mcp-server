@@ -428,3 +428,25 @@ def test_resource_url_without_http_host_stops_startup(value):
     result = _run_until_exit(**_base(MCP_RESOURCE_URL=value))
 
     _assert_stops_and_names(result, "MCP_RESOURCE_URL")
+
+
+# --- MCP_RESOURCE_URL with a path prefix (README, reverse proxy chapter) ----------------------
+
+def test_resource_url_with_a_path_prefix(start_server, dolibarr):  # noqa: F811
+    # The proxy strips the prefix for the MCP endpoint (public /dolibarr/mcp -> /mcp), but forwards the
+    # metadata path unchanged: the server serves it under the full path of MCP_RESOURCE_URL.
+    server = start_server(**_base(DOLIBARR_URL=dolibarr.base_url,
+                                  MCP_RESOURCE_URL="https://proxy.customer.test/dolibarr/mcp"))
+    headers = {"Host": "proxy.customer.test"}
+
+    r = _challenge(server.base_url, "proxy.customer.test")
+    assert r.status_code == 401
+    assert (_resource_metadata_url(r)
+            == "https://proxy.customer.test/.well-known/oauth-protected-resource/dolibarr/mcp")
+    doc = httpx.get(f"{server.base_url}/.well-known/oauth-protected-resource/dolibarr/mcp",
+                    headers=headers, timeout=10)
+    assert doc.status_code == 200
+    assert doc.json()["resource"] == "https://proxy.customer.test/dolibarr/mcp"
+    assert httpx.get(f"{server.base_url}/.well-known/oauth-protected-resource/mcp",
+                     headers=headers, timeout=10).status_code == 404
+    assert _call_whoami(server.base_url, "proxy.customer.test").status_code == 200
