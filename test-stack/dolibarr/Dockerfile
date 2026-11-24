@@ -36,7 +36,8 @@ RUN set -eu; V="$RESTOAUTH_VERSION"; ZIP="module_restoauth-$V.zip"; \
     elif [ -f "/local/$DESC" ]; then \
       [ -d /local/.git ] || { echo "restoauth: the local checkout has no .git folder; give a git checkout or a folder with $ZIP" >&2; exit 1; }; \
       git config --global --add safe.directory /local; \
-      REF="$(git -C /local -c user.name=test-stack -c user.email=test-stack@localhost stash create)"; \
+      git -C /local rev-parse --verify -q HEAD >/dev/null || { echo "restoauth: the local checkout has no commit" >&2; exit 1; }; \
+      REF="$(git -C /local -c user.name=test-stack -c user.email=test-stack@localhost stash create || true)"; \
       if [ -n "$REF" ]; then STATE="with uncommitted changes"; else REF=HEAD; STATE="clean"; fi; \
       echo "restoauth: building $ZIP from the local checkout at $(git -C /local rev-parse --short HEAD), $STATE"; \
       git -C /local archive --format=zip --prefix=restoauth/ -o "/$ZIP" "$REF"; \
