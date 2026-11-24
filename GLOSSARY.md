@@ -27,7 +27,7 @@ The restoauth right "connect applications via OAuth". Only users who have it, or
 restoauth's `rights_map.json`: which Dolibarr rights a REST path needs, as a default rule plus exceptions. `restoauth/me` delivers it, and the MCP server filters its tools and checks calls with it.
 
 **Dolibarr prerequisites**
-What every customer must set up in Dolibarr before the MCP server works, independent of which identity provider or MCP client they use (API REST and restoauth enabled, allowlists, the connect right, the discovery rewrite rule).
+What every customer must set up in Dolibarr before the MCP server works, independent of which identity provider or MCP client they use (API REST and restoauth enabled, allowlists, the connect right, the discovery rewrite rule). Documented in `docs/setup/dolibarr-prerequisites.md`.
 
 **Example setup**
 One documented, non-mandatory way to connect an identity provider and an MCP client (Keycloak and LibreChat) to Dolibarr and the MCP server.

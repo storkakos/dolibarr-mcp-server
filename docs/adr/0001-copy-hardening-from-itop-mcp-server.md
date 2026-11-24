@@ -13,3 +13,7 @@ Both servers are young, each has only one maintainer, and the two upstream APIs 
 
 - A security fix in the hardening code of one server must be checked against the other by hand. Mention the sibling repo in such a ticket.
 - Revisit this decision when any of these is true: a third MCP server needs the same hardening; the same fix has had to be made in both repos more than twice; or the copied modules have stayed essentially unchanged in both repos for two releases, which shows the seams are stable enough to extract.
+
+## Note: internal CA and httpx 1.x
+
+The copied internal CA support relies on httpx 0.x reading `SSL_CERT_FILE` from the environment when it builds its default SSL context. httpx 1.x drops that environment-based CA lookup. An httpx upgrade (here or in `itop-mcp-server`) must therefore pass the CA bundle explicitly to every client (e.g. `verify=ssl.create_default_context(cafile=...)`), and `tests/test_internal_ca.py` and the smoke test's CA checks must pass before the upgrade is merged.

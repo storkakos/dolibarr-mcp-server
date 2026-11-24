@@ -7,9 +7,9 @@ same for them.
 
 Before you start:
 
-- Install and configure restoauth in Dolibarr as its
-  [README](https://github.com/storkakos/dolibarr-restoauth#readme) describes: the module, API REST,
-  the setup page, the connect right and the discovery rewrite rule. Its check list must pass.
+- Prepare Dolibarr as the [Dolibarr prerequisites](dolibarr-prerequisites.md) describe: restoauth,
+  API REST, the setup page, the connect right and the discovery rewrite rule. Their check list must
+  pass.
 - The MCP server runs behind your reverse proxy (see the [README](../../README.md)), and
   `MCP_RESOURCE_URL` is in restoauth's **Allowed resources**.
 - Keycloak is installed and reachable over HTTPS, with a realm for your users. Installing Keycloak
