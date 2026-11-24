@@ -36,11 +36,16 @@ services:
     <<: *net
 
   # Dolibarr 23 (official image) with restoauth from its release ZIP; the version is pinned in
-  # dolibarr/Dockerfile (RESTOAUTH_VERSION). On every start dolibarr/50-test-stack.sh installs the
-  # ZIP and runs dolibarr/configure.php (modules, restoauth settings, openid_connect, test users,
-  # sample data); the container turns healthy when that succeeded.
+  # dolibarr/Dockerfile (RESTOAUTH_VERSION). RESTOAUTH_LOCAL (a folder with the release ZIP, or a
+  # restoauth checkout) replaces the GitHub release, see the README. On every start
+  # dolibarr/50-test-stack.sh installs the ZIP and runs dolibarr/configure.php (modules, restoauth
+  # settings, openid_connect, test users, sample data); the container turns healthy when that
+  # succeeded.
   dolibarr:
-    build: ./dolibarr
+    build:
+      context: ./dolibarr
+      additional_contexts:
+        restoauth-local: ${RESTOAUTH_LOCAL:-./dolibarr/no-local-restoauth}
     image: dolibarr-mcp-test-dolibarr:${TEST_TAG:-local}
     depends_on: [db]
     environment:

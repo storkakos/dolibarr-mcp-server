@@ -130,7 +130,7 @@ dolibarr-mcp-test-client:local`.
 
 | Step | Done by |
 |---|---|
-| restoauth release ZIP `module_restoauth-<version>.zip`: the asset of the GitHub release `v<version>` if there is one, otherwise built from the tag with restoauth's `scripts/build-release-zip.sh`; the build stops if the ZIP has no module descriptor for that version | `dolibarr/Dockerfile` |
+| restoauth release ZIP `module_restoauth-<version>.zip`: the asset of the GitHub release `v<version>` if there is one, otherwise built from the tag with restoauth's `scripts/build-release-zip.sh`; or a [local ZIP or checkout](#restoauth-from-a-local-zip-or-checkout); the build stops if the ZIP has no module descriptor for that version | `dolibarr/Dockerfile` |
 | Dolibarr 23.0.4 from the official image; the image installs the database and the admin user | `compose.yaml` (`DOLI_*`) |
 | Apache vhost: reverse-proxy settings and the discovery rewrite rule, exactly as in the restoauth README | `dolibarr/dolibarr.conf` |
 | Trust the test CA, install restoauth from the ZIP into `htdocs/custom/restoauth` (the way Dolibarr's module upload does), on every start | `dolibarr/50-test-stack.sh` |
@@ -146,7 +146,32 @@ Credentials tab; Dolibarr is configured by `dolibarr/configure.php` instead of t
 
 The restoauth version is pinned in one place, `RESTOAUTH_VERSION` in `dolibarr/Dockerfile`. To try
 another tag: `docker compose build --build-arg RESTOAUTH_VERSION=X.Y.Z dolibarr`, then
-`docker compose up -d`; the start step replaces the module folder when the version changed.
+`docker compose up -d`; the start step replaces the module folder when the ZIP changed.
+
+### restoauth from a local ZIP or checkout
+
+To test a restoauth change that has no release yet, point `RESTOAUTH_LOCAL` at a folder on the
+Docker host before the build. Without it, the stack takes the pinned release as above.
+
+| `RESTOAUTH_LOCAL` is | The build |
+|---|---|
+| a folder with `module_restoauth-<version>.zip` in it, e.g. restoauth's `dist/` after `bash scripts/build-release-zip.sh vX.Y.Z` | takes that ZIP as it is |
+| a restoauth git checkout (with its `.git` folder) | builds the ZIP from the checkout with `git archive`, like `build-release-zip.sh`: tracked files with their uncommitted changes, without untracked files and without the files marked `export-ignore` |
+
+`<version>` is `RESTOAUTH_VERSION`, so for a module version other than the pinned one also pass
+`--build-arg RESTOAUTH_VERSION=X.Y.Z`. The build stops with a message naming the version it found if
+the module descriptor `core/modules/modRestOAuth.class.php` in the ZIP carries another version, and
+if the folder has neither the ZIP nor a checkout. A relative path is taken from `test-stack/`.
+
+```sh
+RESTOAUTH_LOCAL=/path/to/dolibarr-restoauth docker compose build dolibarr     # or .../dist
+RESTOAUTH_LOCAL=/path/to/dolibarr-restoauth docker compose up -d
+```
+
+Set it for `up` too, or `up --build` falls back to the release. The build log names the source
+(`restoauth: local ZIP ...`, `restoauth: building ... from the local checkout at <commit>`). The
+start step installs the new ZIP when its content changed, also at the same version. On the test VM
+the folder must be on the VM: copy the ZIP there, e.g. into your own run folder.
 
 Dolibarr's configuration runs inside the Dolibarr container, not in the Python client, because it
 needs Dolibarr's own PHP functions (`activateModule`, `dolibarr_set_const`, `User::addrights`, the
