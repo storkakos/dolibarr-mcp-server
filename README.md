@@ -155,7 +155,8 @@ refused rather than normalised: in `MCP_RESOURCE_URL` they stop startup with a m
 setting, in an incoming `Host` header they get `421` and in an `Origin` header `403`. The advertised
 URL stays exactly as written in `MCP_RESOURCE_URL`.
 
-nginx:
+nginx (tested: the test stack's [nginx variant](test-stack/README.md#nginx-variant) builds its
+configuration from this block and the one under [path prefix](#resource-url-with-a-path-prefix)):
 
 ```nginx
 server {
@@ -467,4 +468,6 @@ this server) in the [test stack](test-stack/README.md).
 
 Releasing: set `__version__` in `src/dolibarr_mcp_server/__init__.py` and the image tag in
 `compose.yaml` to the same version (a test checks this), run pytest, the smoke test and the test
-stack's end-to-end checks on the test VM, then tag `vX.Y.Z`.
+stack's end-to-end checks on the test VM, both with Caddy and with the
+[nginx variant](test-stack/README.md#nginx-variant) (mandatory: it tests the nginx blocks of this
+README and of restoauth's README), then tag `vX.Y.Z`.

@@ -5,6 +5,7 @@
 #   docker compose up -d --build      # installs and configures everything
 #   docker compose logs -f setup      # wait for "setup complete"
 #   docker compose run --rm client    # end-to-end checks: OAuth flow, rights, connection end, LibreChat
+# nginx instead of Caddy (on demand, mandatory before a release): add -f compose.yaml -f compose.nginx.yaml.
 # TEST_TAG (default: local) names the three images built here, so runs on a shared Docker host
 # keep their own images apart.
 name: dolibarr-mcp-test

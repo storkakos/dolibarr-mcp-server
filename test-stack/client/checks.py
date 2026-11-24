@@ -9,6 +9,8 @@ than the sample data (TEST_EXTRA_DATA) passes too.
 Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat users log in through
 Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
 chat checks need an LLM key in llm.env and are skipped without it).
+Last the reverse proxy: restoauth's discovery URLs, and in the nginx variant (compose.nginx.yaml) the MCP
+server under a path prefix (skipped behind Caddy).
 Reports each check as PASS, FAIL or SKIP; exit code 1 if any check failed.
 
     docker compose run --rm client            # python checks.py; -v adds the traceback of a failure
@@ -16,14 +18,16 @@ Reports each check as PASS, FAIL or SKIP; exit code 1 if any check failed.
 Later checks use what earlier ones set up (tokens, record ids); after a failure they fail too.
 """
 import os
+import re
 import sys
 import time
 import traceback
+from urllib.parse import urlparse
 
 import requests
 
 import flows
-from common import ANNA_API_KEY, ISSUER, KC_USERS, MCP
+from common import ANNA_API_KEY, DOLIBARR, ISSUER, KC_USERS, MCP
 
 results = []
 state: dict = {}
@@ -42,6 +46,9 @@ ALL_TOOLS = sorted(["whoami", "my_permissions", "list_thirdparties", "get_thirdp
 # Tools that read invoices, proposals or orders: carl has none of those rights.
 DOCUMENT_TOOLS = ["get_invoice", "list_invoices", "list_orders", "list_proposals"]
 REFUSED = "No permission"
+# Which proxy is in front (compose.nginx.yaml sets nginx), and the MCP server under a path prefix (nginx only).
+PROXY = os.environ.get("TEST_PROXY", "caddy")
+PREFIX_MCP = os.environ.get("TEST_MCP_PREFIX_URL", "")
 
 
 def check(name):
@@ -550,6 +557,52 @@ def _():
     _librechat(carl)
     _connect(carl)
     return _whoami_chat(carl)
+
+
+print(f"== Reverse proxy ({PROXY}): restoauth discovery, the MCP server under a path prefix")
+
+
+@check("restoauth metadata at the server root and in the issuer path, both names (discovery rules)")
+def _():
+    for name in ("oauth-authorization-server", "openid-configuration"):
+        for url in (f"{DOLIBARR}/.well-known/{name}/custom/restoauth", f"{ISSUER}/.well-known/{name}"):
+            r = requests.get(url, allow_redirects=False)
+            assert r.status_code == 200 and r.headers.get("content-type", "").startswith("application/json")                 and r.json().get("issuer") == ISSUER, f"{url}: {r.status_code} {r.text[:120]}"
+    return "4 URLs"
+
+
+def _prefix_skip():
+    return "SKIP Caddy has no path prefix variant; run the nginx variant (compose.nginx.yaml)" if not PREFIX_MCP else None
+
+
+@check("path prefix: 401 challenge at the prefixed endpoint, protected resource metadata under the prefix")
+def _():
+    if skip := _prefix_skip():
+        return skip
+    r = requests.post(PREFIX_MCP, json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+                      headers={"Accept": "application/json, text/event-stream"})
+    m = re.search(r'resource_metadata="([^"]+)"', r.headers.get("www-authenticate", ""))
+    assert r.status_code == 401 and m, f"{r.status_code} {r.headers.get('www-authenticate')}"
+    u = urlparse(PREFIX_MCP)
+    expected = f"{u.scheme}://{u.netloc}/.well-known/oauth-protected-resource{u.path}"
+    assert m.group(1) == expected, m.group(1)
+    r = requests.get(m.group(1), allow_redirects=False)
+    assert r.status_code == 200, f"{r.status_code} {r.text[:120]}"
+    prm = r.json()
+    assert prm["resource"].rstrip("/") == PREFIX_MCP and [s.rstrip("/") for s in prm["authorization_servers"]] == [ISSUER], prm
+    state["prefix_prm"] = prm
+    return m.group(1)
+
+
+@check("path prefix: a user connects for the prefixed resource and the tools answer through the prefix")
+def _():
+    if skip := _prefix_skip():
+        return skip
+    con = flows.Connection(state["prefix_prm"], state["asm"], state["client_id"], anna[0], anna[1])
+    tok = con.tokens()["access_token"]
+    res = flows._result(flows.mcp(tok, "tools/call", {"name": "whoami", "arguments": {}}, url=PREFIX_MCP))
+    assert "Anna Agent (anna)" in res["content"][0]["text"], res
+    return "whoami names anna"
 
 
 failed = [r for r in results if r[0] == "FAIL"]
