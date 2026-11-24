@@ -20,6 +20,10 @@ and the 401 challenge advertise it, never the bind address. Its host (and port) 
 Host header values the proxy passes through (public_hosts), in normal form (normalise_host): lower case,
 without a trailing dot, IPv6 literals compressed. The server brings incoming Host and Origin headers into
 the same form before comparing them, so equivalent spellings of the public host are accepted.
+An IPv4 address must be written as a dotted quad (four decimal numbers 0-255, no leading zeros). Other
+spellings that the URL standard and many resolvers also read as IPv4 (127.1, 0x7f.0.0.1, 0177.0.0.1,
+2130706433; see alternative_ipv4) are refused, not normalised: in MCP_RESOURCE_URL they stop startup,
+in an incoming Host or Origin header they get 421 or 403 with a message that says why.
 
 SSL_CERT_FILE is read by the HTTP client itself (httpx with trust_env); the bundle replaces the built-in
 public CAs. It is checked here only so that a missing, unreadable or empty bundle stops startup instead of
@@ -28,6 +32,7 @@ turning every token check into a 401. Certificate verification is never turned o
 from __future__ import annotations
 
 import ipaddress
+import re
 import ssl
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -130,6 +135,28 @@ def normalise_host(hostname: str) -> str:
     return hostname[:-1] if hostname.endswith(".") else hostname
 
 
+# The last label of a host the URL standard (WHATWG, "ends in a number") parses as an IPv4 address:
+# decimal digits, or a hexadecimal number with 0x prefix.
+_NUMBER_LABEL = re.compile(r"^(?:[0-9]+|0x[0-9a-f]*)$")
+
+
+def alternative_ipv4(hostname: str) -> bool:
+    """True for a host (without brackets or port) that is meant as an IPv4 address but is not a dotted
+    quad: short forms (127.1), hexadecimal or octal parts (0x7f.0.0.1, 0177.0.0.1), a single integer
+    (2130706433), parts out of range (256.0.0.1) or too many parts (1.2.3.4.5). The rule is the URL
+    standard's: a host whose last label is a number is an IPv4 address. Such a host is refused, never
+    normalised (see the module docstring); a dotted quad, a name and an IPv6 literal are not affected."""
+    host = hostname.lower()
+    host = host[:-1] if host.endswith(".") else host
+    if not host or ":" in host or not _NUMBER_LABEL.match(host.rsplit(".", 1)[-1]):
+        return False
+    try:
+        ipaddress.IPv4Address(host)  # strict: four decimal parts 0-255, no leading zeros
+    except ValueError:
+        return True
+    return False
+
+
 def _public_host(resource_url: str) -> tuple[tuple[str, ...], str]:
     """Host header values and origin of MCP_RESOURCE_URL (already checked by _http_url).
 
@@ -139,6 +166,9 @@ def _public_host(resource_url: str) -> tuple[tuple[str, ...], str]:
     lower case.
     """
     parts = urlsplit(resource_url)
+    if alternative_ipv4(parts.hostname):
+        raise ConfigError(f"MCP_RESOURCE_URL must write an IPv4 address as a dotted quad (four decimal numbers "
+                          f"0-255 without leading zeros, e.g. 192.0.2.10), but its host is {parts.hostname!r}")
     hostname, port = normalise_host(parts.hostname), parts.port
     host = f"[{hostname}]" if ":" in hostname else hostname
     if port is None or port == DEFAULT_PORTS[parts.scheme]:
