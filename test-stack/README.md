@@ -3,19 +3,22 @@
 **Test only, not for production.** Every password, key and secret in this folder is a test value.
 Nothing here is needed to run the MCP server; production uses the `compose.yaml` in the repo root.
 
-The stack runs Dolibarr with restoauth, an identity provider and the MCP server together on one
-Docker host, configured without manual clicks, so the whole chain can be tested against real
-software.
+The stack runs Dolibarr with restoauth, an identity provider, an MCP client and the MCP server
+together on one Docker host, configured without manual clicks, so the whole chain can be tested
+against real software. It reproduces the validation run of
+[Example setup: Keycloak and LibreChat](../docs/setup/example-keycloak-librechat.md).
 
-It starts a TLS proxy (Caddy) for `erp.example.com`, `sso.example.com` and `mcp.example.com`,
-MariaDB, Dolibarr 23.0.4 with restoauth 0.2.1, Keycloak 26.8.2 and the MCP server built from this
-repo. Inside the stack's network the hostnames point to the proxy, so no hosts file is needed.
+It starts a TLS proxy (Caddy) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
+`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.2.1, Keycloak 26.8.2, MongoDB,
+LibreChat v0.8.9 and the MCP server built from this repo. Inside the stack's network the hostnames
+point to the proxy, so no hosts file is needed.
 
 ## What you need
 
-- Docker with Compose v2.24 or later, about 3 GB of free disk space, internet access (Docker Hub,
+- Docker with Compose v2.24 or later, about 5 GB of free disk space, internet access (Docker Hub,
   quay.io and GitHub for restoauth)
 - `openssl` and `sh` for the certificates
+- For the chat checks (a chat answer in LibreChat): your own LLM API key, see [LLM key](#llm-key)
 
 ## Start
 
@@ -27,7 +30,8 @@ docker compose logs -f setup      # wait for "setup complete" (a few minutes on 
 ```
 
 `setup` ends with checks through the proxy and stops with `setup check failed: ...` if one fails.
-`docker compose ps` shows `dolibarr` as `healthy` once Dolibarr is configured.
+`docker compose ps` shows `dolibarr` as `healthy` once Dolibarr is configured. LibreChat starts after
+`setup` completed.
 
 ## End-to-end checks
 
@@ -38,18 +42,34 @@ docker compose run --rm client    # waits for "setup complete", then runs client
 `checks.py` acts as an MCP client and as the users' browsers, through the proxy, and prints one
 line per check (`PASS`, `FAIL` or `SKIP`); it exits with 1 if a check failed.
 `docker compose run --rm client python checks.py -v` adds the traceback of a failed check. It takes
-about two minutes, mostly waiting for the MCP server's rights cache (30 s) after a revocation.
+about two and a half minutes, mostly waiting for the MCP server's rights cache (30 s) after a
+revocation.
 
 | Part | Checks |
 |---|---|
 | OAuth flow | discovery (401 challenge, protected resource metadata, authorization server metadata at the server root); dynamic registration; authorize, Dolibarr login through Keycloak, consent page with the user's rights; token with PKCE, code used only once; the token works at the MCP server and the Dolibarr REST API; refresh with rotation (old access token dead); refresh token reuse revokes the whole connection; revoke (RFC 7009) |
 | Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
+| Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 7) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. The two chat checks are skipped without an [LLM key](#llm-key). |
 | Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403 |
 
 The checks register a new client on every run and leave it and the revoked connections behind;
-they do not depend on what an earlier run left. The MCP client's redirect URI is the
-`chat.example.com` callback on the allowlist: the checks stop at that redirect and read the code from
-it, so nothing needs to answer there.
+they do not depend on what an earlier run left. The OAuth flow checks use LibreChat's callback
+(`chat.example.com`, on the allowlist) as their redirect URI: they stop at that redirect and read the
+code from it, as a client would. In the LibreChat checks, LibreChat itself receives it.
+
+## LLM key
+
+LibreChat needs a model with tool calls for the chat checks. The example uses OpenRouter. Put your
+key into `test-stack/llm.env`, which is git-ignored and never committed:
+
+```sh
+umask 077
+echo 'OPENROUTER_KEY=<your key>' > llm.env
+docker compose up -d librechat        # pick up the key
+```
+
+For another provider, change the endpoint in `librechat/librechat.yaml` and the key name in
+`llm.env`. Without `llm.env`, `checks.py` skips the two chat checks and says so.
 
 ## Stop
 
@@ -65,7 +85,7 @@ After `down`, `docker compose up -d` brings the same state back: Dolibarr's conf
 
 ```sh
 docker compose down -v            # removes the containers and all volumes (database, Dolibarr
-                                  # documents and custom folder, Keycloak)
+                                  # documents and custom folder, Keycloak, MongoDB)
 docker compose up -d --build      # then start again from a clean state
 ```
 
@@ -82,9 +102,14 @@ dolibarr-mcp-test-client:local`.
 | Apache vhost: reverse-proxy settings and the discovery rewrite rule, exactly as in the restoauth README | `dolibarr/dolibarr.conf` |
 | Trust the test CA, install restoauth from the ZIP into `htdocs/custom/restoauth` (the way Dolibarr's module upload does), on every start | `dolibarr/50-test-stack.sh` |
 | Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
-| Keycloak realm `example`, client `dolibarr`, test users; no self-registration, usernames cannot be changed | `client/keycloak_realm.py` |
+| Keycloak realm `example`, clients `dolibarr` and `librechat`, test users; no self-registration, usernames cannot be changed | `client/keycloak_realm.py` (the example setup's values) |
+| LibreChat `.env` and `librechat.yaml`: Keycloak login, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
-| End-to-end checks: OAuth flow and rights (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
+| End-to-end checks: OAuth flow, rights and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
+
+Differences from the example setup, all for a local test: the Keycloak realm is created (the manual
+assumes it exists); the client secrets are fixed test values instead of being copied from the
+Credentials tab; Dolibarr is configured by `dolibarr/configure.php` instead of the setup pages.
 
 The restoauth version is pinned in one place, `RESTOAUTH_VERSION` in `dolibarr/Dockerfile`. To try
 another tag: `docker compose build --build-arg RESTOAUTH_VERSION=X.Y.Z dolibarr`, then
@@ -103,6 +128,9 @@ business object classes). The `setup` service starts once that step succeeded (h
 | `bob` | Keycloak; Dolibarr user `bob` | `Test-Bob-Pw1!` | the same read rights, **no** connect right |
 | `carl` | Keycloak; Dolibarr user `carl` | `Test-Carl-Pw1!` | connect right, read third parties and products only (no invoices, proposals, orders); sales representative of South Customer Inc only |
 | `admin` | Keycloak `master` realm | `test-kc-admin-pw` | |
+
+`anna`, `bob` and `carl` also log into LibreChat with **Sign in with Keycloak**; LibreChat creates
+their accounts on the first login (by email, `<name>@example.com`).
 
 `anna`, `bob` and `carl` log in to Dolibarr through Keycloak only (button on the login page); they have no
 Dolibarr password. The Dolibarr login equals the Keycloak `preferred_username`, because Dolibarr 23
@@ -132,17 +160,51 @@ docker compose -f compose.yaml -f compose.ports.yaml up -d
 | proxy | 443 (`TEST_HTTPS_PORT`) | HTTPS for all hostnames |
 | Dolibarr | 8082 (`TEST_DOLIBARR_PORT`) | Dolibarr's Apache, plain HTTP |
 | Keycloak | 8080 (`TEST_KEYCLOAK_PORT`), 9000 (`TEST_KEYCLOAK_MGMT_PORT`) | admin console; management |
+| LibreChat | 3080 (`TEST_LIBRECHAT_PORT`) | plain HTTP |
 | MCP server | 8131 (`TEST_MCP_PORT`) | plain HTTP |
 | MariaDB | 3306 (`TEST_DB_PORT`) | user `dolibarr`, password `test-dolibarr-db-pw` |
+| MongoDB | 27017 (`TEST_MONGO_PORT`) | no authentication |
 
 If another stack on the host already uses a port, set the variable, e.g.
 `TEST_HTTPS_PORT=8443 TEST_DOLIBARR_PORT=18082 docker compose -f compose.yaml -f compose.ports.yaml up -d`.
 
-**Logins and the OAuth flows need the hostnames**: Dolibarr and Keycloak send the browser to
-`https://*.example.com` (port 443). For those, map the hostnames to the Docker host in your hosts
+**Logins and the OAuth flows need the hostnames**: Dolibarr, Keycloak and LibreChat send the browser
+to `https://*.example.com` (port 443). For those, map the hostnames to the Docker host in your hosts
 file, publish the proxy on port 443, and trust `certs/ca.crt` in your browser (or accept the
 certificate warning once per hostname). The MCP server answers only for `mcp.example.com` and
 loopback, so its plain HTTP port is useful for the healthcheck and little else.
+
+## In a browser on another machine, without admin rights
+
+Changing the hosts file needs admin rights. On Windows, `browser/open-browser.ps1` does without:
+it starts a browser with its own profile that resolves the four hostnames to the Docker host, and
+it can trust the test CA for your Windows user only.
+
+1. Publish the proxy on port 443 (see above):
+   `docker compose -f compose.yaml -f compose.ports.yaml up -d`
+2. Copy `certs/ca.crt` from the Docker host to your machine.
+3. In PowerShell (no admin rights), in `test-stack/browser/`:
+
+   ```powershell
+   .\open-browser.ps1 -HostIp <Docker host IP> -CaFile <path to ca.crt> -Shortcut
+   ```
+
+   Windows asks once whether to trust the test CA: answer **Yes**. The browser opens
+   `https://chat.example.com` and `https://erp.example.com`; `-Shortcut` puts a desktop shortcut
+   to open it again.
+
+| `-Browser` | How it resolves the hostnames | Note |
+|---|---|---|
+| `firefox` (default) | profile setting `network.dns.forceResolve`: **every** hostname goes to the Docker host | use that profile only for the test stack |
+| `edge`, `chrome` | `--host-resolver-rules` for the four hostnames only | |
+
+The profiles live in `%USERPROFILE%\.dolibarr-mcp-test\`, apart from your normal browser profile.
+To undo: delete that folder and the desktop shortcut, and remove the test CA in `certmgr.msc`
+(Trusted Root Certification Authorities, "dolibarr-mcp test CA"). If the PowerShell execution policy
+blocks the script, start it with `powershell -ExecutionPolicy Bypass -File .\open-browser.ps1 ...`.
+
+The browser needs port 443 on the Docker host. If another stack already publishes 443 there (for
+example the iTop test stack), stop that one first; the hostnames cannot be sent to another port.
 
 ## Notes
 
@@ -150,5 +212,5 @@ loopback, so its plain HTTP port is useful for the healthcheck and little else.
   `local`) names the three images built here; on a shared Docker host give each run its own
   project name and tag, e.g. `TEST_TAG=dr10 docker compose -p dr10 up -d --build` (see
   `docs/agents/test-vm.md`).
-- `chat.example.com` is already in the certificate and in the redirect allowlist for an MCP client
-  in the stack; the stack itself has no MCP client yet (`checks.py` only uses the redirect URI).
+- LibreChat limits logins per IP (about 7 in 5 minutes). Running `checks.py` several times in a row
+  can end with `auth_rate_limited`; wait five minutes.

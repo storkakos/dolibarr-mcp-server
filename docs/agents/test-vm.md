@@ -99,11 +99,13 @@ $SSH "cd $DIR/test-stack && sh make-certs.sh && TEST_TAG=$RUN docker compose -p 
 $SSH "cd $DIR/test-stack && docker wait $RUN-setup-1; docker compose -p $RUN logs setup | tail -15"
 ```
 
-`docker wait` prints `0` when the setup ended with "setup complete". Then the end-to-end checks (OAuth flow and rights, about two minutes; exit code 1 if a check failed):
+`docker wait` prints `0` when the setup ended with "setup complete". Then the end-to-end checks (OAuth flow, rights and LibreChat, about two and a half minutes; exit code 1 if a check failed):
 
 ```sh
 $SSH "cd $DIR/test-stack && TEST_TAG=$RUN docker compose -p $RUN run --rm client"
 ```
+
+The two LibreChat chat checks need an LLM key in `$DIR/test-stack/llm.env` (see the test stack README) and are skipped without it. If the maintainer left one on the VM, copy it into your own folder before `up` (`cp <their file> $DIR/test-stack/llm.env && chmod 600 $DIR/test-stack/llm.env`); never print it and never commit it. It goes away with your folder.
 
 Take it down again with its volumes and its images:
 
@@ -111,7 +113,7 @@ Take it down again with its volumes and its images:
 $SSH "cd $DIR/test-stack && docker compose -p $RUN down --volumes --remove-orphans && docker rmi dolibarr-mcp-test-dolibarr:$RUN dolibarr-mcp-server:test-stack-$RUN dolibarr-mcp-test-client:$RUN"
 ```
 
-Keep the pulled base images (`dolibarr/dolibarr`, `mariadb`, `caddy`, Keycloak, `alpine`): other runs use them too.
+Keep the pulled base images (`dolibarr/dolibarr`, `mariadb`, `caddy`, Keycloak, `mongo`, `librechat/librechat`, `alpine`): other runs use them too.
 
 ## Clean up
 
