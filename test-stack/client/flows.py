@@ -155,8 +155,8 @@ def dolibarr_me(access_token: str) -> requests.Response:
     return requests.get(f"{API}/restoauth/me", headers={"Authorization": f"Bearer {access_token}"})
 
 
-def mcp(access_token: str, method: str, params: dict | None = None) -> requests.Response:
-    return requests.post(MCP, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
+def mcp(access_token: str, method: str, params: dict | None = None, url: str = MCP) -> requests.Response:
+    return requests.post(url, json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
                          headers={"Authorization": f"Bearer {access_token}",
                                   "Accept": "application/json, text/event-stream",
                                   "MCP-Protocol-Version": "2025-06-18"})

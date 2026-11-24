@@ -1,5 +1,6 @@
 #!/bin/sh
-# TEST ONLY. Creates certs/ca.crt (test CA) and certs/site.crt (erp/sso/mcp/chat.example.com).
+# TEST ONLY. Creates certs/ca.crt (test CA) and certs/site.crt (erp/sso/mcp/chat/apps.example.com;
+# apps.example.com is only used by the nginx variant).
 # Keeps existing files; delete certs/ to start over. certs/ is git-ignored.
 set -eu
 cd "$(dirname "$0")"
@@ -7,6 +8,9 @@ mkdir -p certs
 cd certs
 if [ -f ca.crt ] && [ -f site.crt ]; then
   echo "certs/ already exists, keeping it"
+  if ! openssl x509 -in site.crt -noout -text | grep -q 'DNS:apps.example.com'; then
+    echo "note: certs/site.crt has no apps.example.com, which the nginx variant needs; delete certs/ and run again"
+  fi
   exit 0
 fi
 openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=dolibarr-mcp test CA" \
@@ -15,7 +19,7 @@ openssl req -x509 -newkey rsa:2048 -nodes -days 365 -subj "/CN=dolibarr-mcp test
   -addext "subjectKeyIdentifier=hash" 2>/dev/null
 openssl req -newkey rsa:2048 -nodes -subj "/CN=example.com" -keyout site.key -out site.csr 2>/dev/null
 cat > ext.cnf <<EOT
-subjectAltName=DNS:erp.example.com,DNS:sso.example.com,DNS:mcp.example.com,DNS:chat.example.com
+subjectAltName=DNS:erp.example.com,DNS:sso.example.com,DNS:mcp.example.com,DNS:chat.example.com,DNS:apps.example.com
 basicConstraints=CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth

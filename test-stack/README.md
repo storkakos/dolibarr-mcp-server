@@ -8,7 +8,7 @@ together on one Docker host, configured without manual clicks, so the whole chai
 against real software. It reproduces the validation run of
 [Example setup: Keycloak and LibreChat](../docs/setup/example-keycloak-librechat.md).
 
-It starts a TLS proxy (Caddy) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
+It starts a TLS proxy (Caddy, or nginx in the [nginx variant](#nginx-variant)) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
 `mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.2.2, Keycloak 26.8.2, MongoDB,
 LibreChat v0.8.9 and the MCP server built from this repo. Inside the stack's network the hostnames
 point to the proxy, so no hosts file is needed.
@@ -51,12 +51,62 @@ revocation; the expiry check's wait for the short access token lifetime (60 s) o
 | Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
 | How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one; with a lifetime longer than `EXPIRY_MAX_WAIT` (300 s) this check is reported as `SKIP` with the reason. Each refusal is checked to happen before the token would have expired by itself |
 | Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 7) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. The two chat checks are skipped without an [LLM key](#llm-key). |
+| Reverse proxy | restoauth's metadata at the server root and in the issuer path, as `oauth-authorization-server` and `openid-configuration` (the discovery rules); in the [nginx variant](#nginx-variant) only: the MCP server under a path prefix answers its `401` challenge with the prefixed metadata URL, the metadata names the prefixed resource, and `anna` connects for that resource and calls `whoami` through the prefix (behind Caddy these two are `SKIP`) |
 | Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403; `anna`'s own Dolibarr API key reads her third parties at Dolibarr's REST API (`DOLAPIKEY`), `restoauth/me` answers for it with `"token": null`, and the MCP server refuses it with `401` and the resource metadata challenge |
 
 The checks register a new client on every run and leave it and the revoked connections behind;
 they do not depend on what an earlier run left. The OAuth flow checks use LibreChat's callback
 (`chat.example.com`, on the allowlist) as their redirect URI: they stop at that redirect and read the
 code from it, as a client would. In the LibreChat checks, LibreChat itself receives it.
+
+## nginx variant
+
+On demand, and **mandatory before a release**: nginx replaces Caddy as the TLS proxy, with the same
+hostnames and certificates, and everything else stays the same. Add `compose.nginx.yaml` to every
+command:
+
+```sh
+./make-certs.sh                   # the certificate must include apps.example.com (see below)
+docker compose -f compose.yaml -f compose.nginx.yaml up -d --build
+docker compose -f compose.yaml -f compose.nginx.yaml logs -f setup proxy   # "setup complete"
+docker compose -f compose.yaml -f compose.nginx.yaml run --rm client
+docker compose -f compose.yaml -f compose.nginx.yaml down -v
+```
+
+Without `compose.nginx.yaml` the stack runs with Caddy as before. Do not switch a running stack
+between the two; take it down with `down -v` first.
+
+**The documentation is the configuration.** At start-up the proxy (`nginx/build-conf.sh`) extracts
+the nginx code blocks of the READMEs and assembles its configuration from them, and prints it to its
+log:
+
+| Block | Taken from | Found by | Used for |
+|---|---|---|---|
+| server block for the MCP server | [`../README.md`](../README.md#reverse-proxy-tls), "Reverse proxy (TLS)" | `server_name mcp.example.com;` | `mcp.example.com`, as written |
+| path prefix | [`../README.md`](../README.md#resource-url-with-a-path-prefix), "Resource URL with a path prefix" | `location = /dolibarr/mcp {` | inside the server block for `apps.example.com`, in front of a second MCP server `mcp-prefix` with `MCP_RESOURCE_URL=https://apps.example.com/dolibarr/mcp` |
+| discovery rules | restoauth's `README.md`, "Rewrite rules for discovery", the copy that comes with the installed module (`htdocs/custom/restoauth/README.md`) | `/custom/restoauth/metadata.php` | inside the server block for `erp.example.com`, in front of Dolibarr's Apache |
+
+The stack fills in only what the documentation leaves to the reader: the certificate paths
+(`ssl_certificate`, `ssl_certificate_key`), the upstream (`127.0.0.1:8131` becomes the MCP container)
+and the server blocks around the location snippets, plus plain proxy blocks for `sso` and `chat`.
+A block that is missing or found twice stops the proxy with `[nginx-variant] ...`, a block nginx
+refuses stops it at `nginx -t`, and a block that loads but does not work fails the setup or the
+check list. When you change one of these blocks, keep the text it is found by, or change
+`nginx/build-conf.sh` with it.
+
+What else differs from the Caddy stack:
+
+- `TEST_PROXY=nginx` switches off the Apache discovery rules in `dolibarr/dolibarr.conf`, so the
+  discovery URLs are answered by restoauth's nginx rules only; `setup` checks that Dolibarr's Apache
+  answers them with 404 itself.
+- restoauth's allowed resources contain both `https://mcp.example.com/mcp` and
+  `https://apps.example.com/dolibarr/mcp`.
+- The proxy starts once Dolibarr (restoauth installed), both MCP servers and Keycloak are up.
+- `make-certs.sh` puts `apps.example.com` into the certificate. A `certs/` folder made before that
+  lacks it (`make-certs.sh` says so): delete `certs/` and run it again.
+
+nginx is pinned in `compose.nginx.yaml` (`nginx:1.30.5`, a stable release). The run and the check
+list take as long as with Caddy.
 
 ## LLM key
 
@@ -137,6 +187,7 @@ dolibarr-mcp-test-client:local`.
 | Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, short access token lifetime, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
 | Keycloak realm `example`, clients `dolibarr` and `librechat`, test users; no self-registration, usernames cannot be changed | `client/keycloak_realm.py` (the example setup's values) |
 | LibreChat `.env` and `librechat.yaml`: Keycloak login, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
+| nginx variant: nginx as TLS proxy, its configuration assembled from the READMEs' nginx blocks; a second MCP server under a path prefix (see [nginx variant](#nginx-variant)) | `compose.nginx.yaml`, `nginx/build-conf.sh` |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
 | End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
 

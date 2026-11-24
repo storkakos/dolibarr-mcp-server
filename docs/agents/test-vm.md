@@ -107,6 +107,14 @@ $SSH "cd $DIR/test-stack && TEST_TAG=$RUN docker compose -p $RUN run --rm client
 
 The two LibreChat chat checks need an LLM key in `$DIR/test-stack/llm.env` (see the test stack README) and are skipped without it. If the maintainer left one on the VM, copy it into your own folder before `up` (`cp <their file> $DIR/test-stack/llm.env && chmod 600 $DIR/test-stack/llm.env`); never print it and never commit it. It goes away with your folder.
 
+For the nginx variant (see the test stack README), add `-f compose.yaml -f compose.nginx.yaml` after
+`-p $RUN` in the `up`, `run` and `down` commands. It uses `nginx:1.30.5` as base image.
+
+If Docker Hub answers a pull with `429 Too Many Requests` (anonymous pull limit, shared by every run
+on the VM), pull the same official image from Google's mirror and tag it with its Docker Hub name,
+e.g. `docker pull mirror.gcr.io/library/nginx:1.30.5 && docker tag mirror.gcr.io/library/nginx:1.30.5
+nginx:1.30.5`; base images of the builds (`python:3.13.18-slim`) go the same way.
+
 Take it down again with its volumes and its images:
 
 ```sh

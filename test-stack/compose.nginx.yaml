@@ -1,0 +1,62 @@
+# TEST ONLY. nginx variant of the test stack: nginx replaces Caddy as the TLS proxy, with the same
+# hostnames and certificates. On demand, and mandatory before a release (see README.md, "nginx variant"):
+#
+#   docker compose -f compose.yaml -f compose.nginx.yaml up -d --build
+#   docker compose -f compose.yaml -f compose.nginx.yaml run --rm client
+#
+# The proxy assembles its configuration at start-up from the nginx code blocks of the READMEs
+# (nginx/build-conf.sh): this repo's server block for the MCP server and its path prefix variant, and
+# restoauth's discovery rules in the server block for Dolibarr. A second MCP server (mcp-prefix)
+# serves the path prefix variant at https://apps.example.com/dolibarr/mcp. Dolibarr's Apache leaves
+# discovery to nginx (TEST_PROXY=nginx switches its own rewrite rules off).
+services:
+  proxy:
+    image: nginx:1.30.5
+    entrypoint: ["/bin/sh", "/test-stack/nginx/build-conf.sh"]
+    depends_on:
+      # restoauth's README comes with the installed module, in Dolibarr's custom folder
+      dolibarr:
+        condition: service_healthy
+      mcp:
+        condition: service_healthy
+      mcp-prefix:
+        condition: service_healthy
+      keycloak:
+        condition: service_started
+    volumes:
+      - ./nginx/build-conf.sh:/test-stack/nginx/build-conf.sh:ro
+      - ../README.md:/docs/mcp-server/README.md:ro
+      - dolibarr-custom:/var/www/html/custom:ro
+    healthcheck:
+      test: ["CMD-SHELL", "kill -0 $$(cat /run/nginx.pid)"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+    networks:
+      net:
+        aliases: [erp.example.com, sso.example.com, chat.example.com, mcp.example.com, apps.example.com]
+
+  dolibarr:
+    environment:
+      TEST_PROXY: nginx
+      TEST_MCP_RESOURCE: https://mcp.example.com/mcp,https://apps.example.com/dolibarr/mcp
+
+  # The MCP server under a path prefix (README, "Resource URL with a path prefix").
+  mcp-prefix:
+    extends:
+      file: compose.yaml
+      service: mcp
+    environment:
+      MCP_RESOURCE_URL: https://apps.example.com/dolibarr/mcp
+
+  setup:
+    depends_on:
+      proxy:
+        condition: service_healthy
+    environment:
+      TEST_PROXY: nginx
+
+  client:
+    environment:
+      TEST_PROXY: nginx
+      TEST_MCP_PREFIX_URL: https://apps.example.com/dolibarr/mcp
