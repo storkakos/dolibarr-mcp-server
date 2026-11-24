@@ -99,7 +99,7 @@ $SSH "cd $DIR/test-stack && sh make-certs.sh && TEST_TAG=$RUN docker compose -p 
 $SSH "cd $DIR/test-stack && docker wait $RUN-setup-1; docker compose -p $RUN logs setup | tail -15"
 ```
 
-`docker wait` prints `0` when the setup ended with "setup complete". Then the end-to-end checks (OAuth flow, rights and LibreChat, about two and a half minutes; exit code 1 if a check failed):
+`docker wait` prints `0` when the setup ended with "setup complete". Then the end-to-end checks (OAuth flow, rights, how a connection ends and LibreChat, about two and a half minutes; exit code 1 if a check failed):
 
 ```sh
 $SSH "cd $DIR/test-stack && TEST_TAG=$RUN docker compose -p $RUN run --rm client"

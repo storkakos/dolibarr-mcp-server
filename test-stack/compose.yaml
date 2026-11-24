@@ -4,7 +4,7 @@
 #   ./make-certs.sh                   # test CA + certificate for the example hostnames
 #   docker compose up -d --build      # installs and configures everything
 #   docker compose logs -f setup      # wait for "setup complete"
-#   docker compose run --rm client    # end-to-end checks: OAuth flow, rights, LibreChat
+#   docker compose run --rm client    # end-to-end checks: OAuth flow, rights, connection end, LibreChat
 # TEST_TAG (default: local) names the three images built here, so runs on a shared Docker host
 # keep their own images apart.
 name: dolibarr-mcp-test
@@ -61,6 +61,8 @@ services:
       TEST_OIDC_ISSUER: https://sso.example.com/realms/example
       TEST_OIDC_CLIENT_ID: dolibarr
       TEST_OIDC_CLIENT_SECRET: test-secret-dolibarr-client-0123456789   # test value
+      # Short access token lifetime (restoauth's minimum, default 3600) for the expiry check
+      TEST_ACCESS_TOKEN_LIFETIME: "60"
     volumes:
       - dolibarr-documents:/var/www/documents
       - dolibarr-custom:/var/www/html/custom
@@ -150,7 +152,7 @@ services:
       - ./certs/ca.crt:/certs/ca.crt:ro
     <<: *net
 
-  # End-to-end checks (client/checks.py): OAuth flow, rights and LibreChat. Waits for "setup complete".
+  # End-to-end checks (client/checks.py): OAuth flow, rights, how a connection ends and LibreChat. Waits for "setup complete".
   #   docker compose run --rm client
   client:
     image: dolibarr-mcp-test-client:${TEST_TAG:-local}

@@ -24,6 +24,7 @@ KC_USERS = [
     ("anna", "Test-Anna-Pw1!", "Anna", "Agent", "anna@example.com"),
     ("bob", "Test-Bob-Pw1!", "Bob", "Support", "bob@example.com"),
     ("carl", "Test-Carl-Pw1!", "Carl", "Sales", "carl@example.com"),
+    ("dave", "Test-Dave-Pw1!", "Dave", "Leaver", "dave@example.com"),
 ]
 
 # LibreChat refuses requests without a browser User-Agent ("Illegal request").

@@ -3,7 +3,7 @@
 
 # The one place that pins restoauth. Override for a test with
 #   docker compose build --build-arg RESTOAUTH_VERSION=X.Y.Z dolibarr
-ARG RESTOAUTH_VERSION=0.2.1
+ARG RESTOAUTH_VERSION=0.2.2
 
 # Stage 1: the release ZIP module_restoauth-<version>.zip. Taken from the GitHub release of tag
 # v<version> if that release has the ZIP attached; otherwise built from the tag with the repo's own
