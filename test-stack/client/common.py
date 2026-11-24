@@ -1,10 +1,14 @@
 """TEST ONLY. Shared values and helpers of the test stack. Every password and secret here is a test value."""
+import re
 import time
+from urllib.parse import urljoin
 
 import requests
+from bs4 import BeautifulSoup
 
 DOLIBARR = "https://erp.example.com"
 SSO = "https://sso.example.com"
+CHAT = "https://chat.example.com"
 MCP = "https://mcp.example.com/mcp"
 REALM = "example"
 # restoauth's issuer: the module URL behind the proxy (the setup page's Issuer field stays empty).
@@ -18,11 +22,49 @@ KC_SECRET_DOLIBARR = "test-secret-dolibarr-client-0123456789"
 KC_USERS = [
     ("anna", "Test-Anna-Pw1!", "Anna", "Agent", "anna@example.com"),
     ("bob", "Test-Bob-Pw1!", "Bob", "Support", "bob@example.com"),
+    ("carl", "Test-Carl-Pw1!", "Carl", "Sales", "carl@example.com"),
 ]
 
 
 def say(*a):
     print(*a, flush=True)
+
+
+def browser() -> requests.Session:
+    return requests.Session()
+
+
+def page_text(html: str, n: int = 600) -> str:
+    return re.sub(r"\s+", " ", BeautifulSoup(html, "lxml").get_text(" ")).strip()[:n]
+
+
+def follow(b: requests.Session, r, stop_prefix: str | None = None):
+    """Follow redirects like a browser; returns the final response, or the URL that starts with stop_prefix."""
+    while r.status_code in (301, 302, 303, 307, 308):
+        loc = urljoin(r.url, r.headers["Location"])
+        if stop_prefix and loc.startswith(stop_prefix):
+            return loc
+        r = b.get(loc, allow_redirects=False)
+    return r
+
+
+def form_data(form) -> dict:
+    data = {}
+    for el in form.find_all(["input", "select", "textarea"]):
+        name = el.get("name")
+        if not name or el.has_attr("disabled"):
+            continue
+        t = (el.get("type") or "text").lower()
+        if el.name == "input" and t in ("checkbox", "radio") and not el.has_attr("checked"):
+            continue
+        if el.name == "input" and t in ("submit", "button", "image"):
+            continue
+        if el.name == "select":
+            opt = el.find("option", selected=True) or el.find("option")
+            data[name] = opt.get("value", opt.text) if opt else ""
+        else:
+            data[name] = el.get("value", "") if el.name == "input" else el.text
+    return data
 
 
 def wait_for(url: str, ok=lambda r: r.status_code < 500, timeout: int = 900, what: str = ""):

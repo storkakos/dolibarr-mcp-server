@@ -29,6 +29,28 @@ docker compose logs -f setup      # wait for "setup complete" (a few minutes on 
 `setup` ends with checks through the proxy and stops with `setup check failed: ...` if one fails.
 `docker compose ps` shows `dolibarr` as `healthy` once Dolibarr is configured.
 
+## End-to-end checks
+
+```sh
+docker compose run --rm client    # waits for "setup complete", then runs client/checks.py
+```
+
+`checks.py` acts as an MCP client and as the users' browsers, through the proxy, and prints one
+line per check (`PASS`, `FAIL` or `SKIP`); it exits with 1 if a check failed.
+`docker compose run --rm client python checks.py -v` adds the traceback of a failed check. It takes
+about two minutes, mostly waiting for the MCP server's rights cache (30 s) after a revocation.
+
+| Part | Checks |
+|---|---|
+| OAuth flow | discovery (401 challenge, protected resource metadata, authorization server metadata at the server root); dynamic registration; authorize, Dolibarr login through Keycloak, consent page with the user's rights; token with PKCE, code used only once; the token works at the MCP server and the Dolibarr REST API; refresh with rotation (old access token dead); refresh token reuse revokes the whole connection; revoke (RFC 7009) |
+| Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
+| Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403 |
+
+The checks register a new client on every run and leave it and the revoked connections behind;
+they do not depend on what an earlier run left. The MCP client's redirect URI is the
+`chat.example.com` callback on the allowlist: the checks stop at that redirect and read the code from
+it, so nothing needs to answer there.
+
 ## Stop
 
 ```sh
@@ -62,6 +84,7 @@ dolibarr-mcp-test-client:local`.
 | Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
 | Keycloak realm `example`, client `dolibarr`, test users; no self-registration, usernames cannot be changed | `client/keycloak_realm.py` |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
+| End-to-end checks: OAuth flow and rights (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
 
 The restoauth version is pinned in one place, `RESTOAUTH_VERSION` in `dolibarr/Dockerfile`. To try
 another tag: `docker compose build --build-arg RESTOAUTH_VERSION=X.Y.Z dolibarr`, then
@@ -78,12 +101,14 @@ business object classes). The `setup` service starts once that step succeeded (h
 | `admin` | Dolibarr (local) | `Test-Admin-Pw1!` | administrator |
 | `anna` | Keycloak; Dolibarr user `anna` | `Test-Anna-Pw1!` | connect right, read third parties, invoices, proposals, orders, products; sales representative of North Customer Ltd only |
 | `bob` | Keycloak; Dolibarr user `bob` | `Test-Bob-Pw1!` | the same read rights, **no** connect right |
+| `carl` | Keycloak; Dolibarr user `carl` | `Test-Carl-Pw1!` | connect right, read third parties and products only (no invoices, proposals, orders); sales representative of South Customer Inc only |
 | `admin` | Keycloak `master` realm | `test-kc-admin-pw` | |
 
-`anna` and `bob` log in to Dolibarr through Keycloak only (button on the login page); they have no
+`anna`, `bob` and `carl` log in to Dolibarr through Keycloak only (button on the login page); they have no
 Dolibarr password. The Dolibarr login equals the Keycloak `preferred_username`, because Dolibarr 23
-does not create users on the first `openid_connect` login. Neither has the right to see all
-customers, so `anna` sees only North Customer Ltd and its documents.
+does not create users on the first `openid_connect` login. None has the right to see all
+customers, so `anna` sees only North Customer Ltd and its documents, and `carl` only South Customer
+Inc.
 
 Sample data: products `SRV-MAINT` (service) and `HW-ROUTER` (product); customers North Customer Ltd
 (Hamburg) and South Customer Inc (Munich), each with one validated invoice, proposal and order.
@@ -126,4 +151,4 @@ loopback, so its plain HTTP port is useful for the healthcheck and little else.
   project name and tag, e.g. `TEST_TAG=dr10 docker compose -p dr10 up -d --build` (see
   `docs/agents/test-vm.md`).
 - `chat.example.com` is already in the certificate and in the redirect allowlist for an MCP client
-  in the stack; the stack itself has no MCP client yet.
+  in the stack; the stack itself has no MCP client yet (`checks.py` only uses the redirect URI).

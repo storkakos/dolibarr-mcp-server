@@ -4,6 +4,7 @@
 #   ./make-certs.sh                   # test CA + certificate for the example hostnames
 #   docker compose up -d --build      # installs and configures everything
 #   docker compose logs -f setup      # wait for "setup complete"
+#   docker compose run --rm client    # end-to-end checks: OAuth flow and rights
 # TEST_TAG (default: local) names the three images built here, so runs on a shared Docker host
 # keep their own images apart.
 name: dolibarr-mcp-test
@@ -112,6 +113,21 @@ services:
         condition: service_healthy
       mcp:
         condition: service_healthy
+    volumes:
+      - ./certs/ca.crt:/ca.crt:ro
+    environment:
+      REQUESTS_CA_BUNDLE: /ca.crt
+    <<: *net
+
+  # End-to-end checks (client/checks.py): OAuth flow and rights. Waits for "setup complete".
+  #   docker compose run --rm client
+  client:
+    image: dolibarr-mcp-test-client:${TEST_TAG:-local}
+    profiles: [checks]
+    command: ["python", "checks.py"]
+    depends_on:
+      setup:
+        condition: service_completed_successfully
     volumes:
       - ./certs/ca.crt:/ca.crt:ro
     environment:
