@@ -99,7 +99,13 @@ $SSH "cd $DIR/test-stack && sh make-certs.sh && TEST_TAG=$RUN docker compose -p 
 $SSH "cd $DIR/test-stack && docker wait $RUN-setup-1; docker compose -p $RUN logs setup | tail -15"
 ```
 
-`docker wait` prints `0` when the setup ended with "setup complete". Take it down again with its volumes and its images:
+`docker wait` prints `0` when the setup ended with "setup complete". Then the end-to-end checks (OAuth flow and rights, about two minutes; exit code 1 if a check failed):
+
+```sh
+$SSH "cd $DIR/test-stack && TEST_TAG=$RUN docker compose -p $RUN run --rm client"
+```
+
+Take it down again with its volumes and its images:
 
 ```sh
 $SSH "cd $DIR/test-stack && docker compose -p $RUN down --volumes --remove-orphans && docker rmi dolibarr-mcp-test-dolibarr:$RUN dolibarr-mcp-server:test-stack-$RUN dolibarr-mcp-test-client:$RUN"

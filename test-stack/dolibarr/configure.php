@@ -38,7 +38,9 @@ $oidcClientSecret = env_required('TEST_OIDC_CLIENT_SECRET');
 // Test users. The Dolibarr login equals the Keycloak preferred_username: Dolibarr 23 does not create
 // users on the first openid_connect login. No Dolibarr password: they log in through Keycloak only.
 // anna has the connect right and sees only the customers she is sales representative of (no
-// societe.client.voir); bob has the same read rights but not the connect right.
+// societe.client.voir); bob has the same read rights but not the connect right; carl has the connect
+// right but reads only third parties and products (no invoices, proposals, orders), so the end-to-end
+// checks (client/checks.py) can compare the tool lists of two connected users.
 $readRights = array(
 	array('societe', 'lire'),
 	array('facture', 'lire'),
@@ -51,6 +53,9 @@ $testUsers = array(
 		'rights' => array_merge(array(array('restoauth', 'connect')), $readRights), 'sales_rep_of' => array('North Customer Ltd')),
 	'bob' => array('firstname' => 'Bob', 'lastname' => 'Support', 'email' => 'bob@example.com',
 		'rights' => $readRights, 'sales_rep_of' => array()),
+	'carl' => array('firstname' => 'Carl', 'lastname' => 'Sales', 'email' => 'carl@example.com',
+		'rights' => array(array('restoauth', 'connect'), array('societe', 'lire'), array('produit', 'lire')),
+		'sales_rep_of' => array('South Customer Inc')),
 );
 
 define('NOSESSION', '1');
