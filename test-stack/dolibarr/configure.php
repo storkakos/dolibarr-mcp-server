@@ -13,6 +13,8 @@
  *   TEST_OIDC_CLIENT_ID        Keycloak client for the Dolibarr login (openid_connect)
  *   TEST_OIDC_CLIENT_SECRET    its secret (test value)
  *   TEST_ACCESS_TOKEN_LIFETIME restoauth's access token lifetime in seconds (short, for the expiry check)
+ *   TEST_ANNA_API_KEY          anna's own Dolibarr API key (DOLAPIKEY), for the check that the MCP server
+ *                              accepts only restoauth tokens
  *
  * Every password and secret in the test stack is a test value.
  */
@@ -36,6 +38,7 @@ $oidcIssuer = rtrim(env_required('TEST_OIDC_ISSUER'), '/');
 $oidcClientId = env_required('TEST_OIDC_CLIENT_ID');
 $oidcClientSecret = env_required('TEST_OIDC_CLIENT_SECRET');
 $accessTokenLifetime = env_required('TEST_ACCESS_TOKEN_LIFETIME');
+$annaApiKey = env_required('TEST_ANNA_API_KEY');
 
 // Test users. The Dolibarr login equals the Keycloak preferred_username: Dolibarr 23 does not create
 // users on the first openid_connect login. No Dolibarr password: they log in through Keycloak only.
@@ -265,5 +268,15 @@ foreach ($testUsers as $login => $u) {
 		step("$login is sales representative of $name");
 	}
 }
+
+// 5. anna's own Dolibarr API key, the kind an n8n integration would use. Stored the way Dolibarr and
+// restoauth store it (dolEncrypt with the 'dolibarr' seed, so the core finds it). restoauth uses the same
+// column as the user's internal key for its tokens, so anna's restoauth tokens keep working with it.
+$sql = "UPDATE ".$db->prefix()."user SET api_key = '".$db->escape(dolEncrypt($annaApiKey, '', '', 'dolibarr'))."'"
+	." WHERE login = 'anna' AND entity IN (0, ".((int) $conf->entity).")";
+if (!$db->query($sql)) {
+	fail("API key for anna: ".$db->lasterror());
+}
+step('user anna: own Dolibarr API key set');
 
 echo "Dolibarr configured\n";

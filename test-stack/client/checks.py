@@ -20,7 +20,7 @@ import traceback
 import requests
 
 import flows
-from common import ISSUER, KC_USERS, MCP
+from common import ANNA_API_KEY, ISSUER, KC_USERS, MCP
 
 results = []
 state: dict = {}
@@ -317,6 +317,23 @@ def _():
     r = requests.get(f"{flows.API}/invoices", headers={"Authorization": f"Bearer {state['carl_tok']}"})
     assert r.status_code in (401, 403), f"Dolibarr gave carl the invoices: {r.status_code}"
     return f"Dolibarr answers carl's /invoices with {r.status_code}"
+
+
+@check("anna's own Dolibarr API key works at Dolibarr's REST API, but the MCP server refuses it with 401")
+def _():
+    r = requests.get(f"{flows.API}/thirdparties", headers={"DOLAPIKEY": ANNA_API_KEY})
+    assert r.status_code == 200 and [x["name"] for x in r.json()] == ["North Customer Ltd"], \
+        f"Dolibarr /thirdparties with anna's API key: {r.status_code} {r.text[:200]}"
+    # What the MCP server sees: restoauth/me knows the key's user, but it is no restoauth token.
+    me = flows.dolibarr_me(ANNA_API_KEY)
+    assert me.status_code == 200 and me.json()["user"]["login"] == "anna" and me.json()["token"] is None, \
+        f"restoauth/me {me.status_code} {me.text[:200]}"
+    for method, params in (("tools/list", {}), ("tools/call", {"name": "whoami", "arguments": {}})):
+        m = flows.mcp(ANNA_API_KEY, method, params)
+        assert m.status_code == 401, f"MCP server {method} with anna's API key: {m.status_code} {m.text[:200]}"
+        challenge = m.headers.get("www-authenticate", "")
+        assert challenge.startswith("Bearer") and "resource_metadata=" in challenge, challenge
+    return "Dolibarr 200, MCP server 401 with the resource metadata challenge"
 
 
 print("== How a connection ends: user disabled, connection ended on the user card, access token expired")

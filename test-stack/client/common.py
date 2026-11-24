@@ -19,6 +19,8 @@ DOLIBARR_ADMIN = ("admin", "Test-Admin-Pw1!")
 KC_ADMIN = ("admin", "test-kc-admin-pw")
 KC_SECRET_DOLIBARR = "test-secret-dolibarr-client-0123456789"
 KC_SECRET_LIBRECHAT = "test-secret-librechat-client-0123456789"
+# anna's own Dolibarr API key (TEST_ANNA_API_KEY in compose.yaml), not a restoauth token
+ANNA_API_KEY = "test-anna-api-key-0123456789abcdef0123"
 # Keycloak users; the Dolibarr login is the same name (preferred_username). Rights: see README.
 KC_USERS = [
     ("anna", "Test-Anna-Pw1!", "Anna", "Agent", "anna@example.com"),

@@ -118,14 +118,22 @@ it.
 
 ## Which tokens the MCP server accepts
 
-The MCP server accepts every bearer token for which `restoauth/me` answers, and does **not** check
-which resource a token was issued for: `restoauth/me` does not say. restoauth binds a token to an
-allowed resource when it issues it (RFC 8707), so keep **Allowed resources** to the MCP server's URL.
+The MCP server accepts **only restoauth access tokens**: bearer tokens for which `restoauth/me`
+answers with a `token` object of type `restoauth`. It does **not** check which resource a token was
+issued for: `restoauth/me` does not say. restoauth binds a token to an allowed resource when it
+issues it (RFC 8707), so keep **Allowed resources** to the MCP server's URL.
 
-Because the hook passes keys that are not restoauth tokens through unchanged (so that existing
-`DOLAPIKEY` integrations keep working), a user's own Dolibarr API key sent as a bearer token is
-accepted too. It gets no more rights at the MCP server than it already has at Dolibarr's REST API
-directly, and the MCP server only reads.
+A user's own Dolibarr API key (`DOLAPIKEY`) is **refused**, even though it still works at Dolibarr's
+REST API directly. restoauth's hook passes keys that are not restoauth tokens through unchanged, so
+that existing `DOLAPIKEY` integrations such as n8n keep working, and `restoauth/me` answers for such a
+key as well, but with `"token": null`. The MCP server takes that as "not a restoauth token": the
+request gets `401` with the usual `WWW-Authenticate` challenge, nothing is sent to Dolibarr's REST
+API with the key, the application log says `Token rejected (...): not a restoauth access token`, and
+the audit log gets a line with `"tool": null` and `"info": "refused: not a restoauth access token"`
+(the key itself is never written, only its short hash). So the assistant is only used through a
+connection the user consented to, can be ended on the user card, and expires.
+
+(MCP server 0.1.0 accepted a plain API key as well. Since 0.1.1 it does not.)
 
 ## Licences
 

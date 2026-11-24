@@ -83,8 +83,11 @@ class ReceivedRequest:
 
 @dataclass
 class FakeDolibarr:
-    # token -> user it belongs to
+    # restoauth access token -> user it belongs to
     tokens: dict[str, User] = field(default_factory=dict)
+    # plain Dolibarr API key (DOLAPIKEY) -> user it belongs to. Dolibarr accepts it on every endpoint, also
+    # as a Bearer, and restoauth/me answers for it with "token": null, like restoauth does.
+    api_keys: dict[str, User] = field(default_factory=dict)
     requests: list[ReceivedRequest] = field(default_factory=list)
     base_url: str = ""
     # seconds from now until issued tokens expire
@@ -101,6 +104,7 @@ class FakeDolibarr:
 
     def reset(self) -> None:
         self.tokens.clear()
+        self.api_keys.clear()
         self.requests.clear()
         self.token_lifetime = 3600
         self.list_rows = None
@@ -123,11 +127,14 @@ class FakeDolibarr:
             rows = rows[:int(query["limit"])]
         return rows
 
-    def _user(self, request: Request) -> User | None:
+    @staticmethod
+    def _bearer(request: Request) -> str:
         auth = request.headers.get("authorization") or ""
-        if not auth.startswith("Bearer "):
-            return None
-        return self.tokens.get(auth.removeprefix("Bearer "))
+        return auth.removeprefix("Bearer ") if auth.startswith("Bearer ") else ""
+
+    def _user(self, request: Request) -> User | None:
+        key = self._bearer(request)
+        return self.tokens.get(key) or self.api_keys.get(key)
 
     async def _api(self, request: Request) -> Response:
         path = "/" + request.path_params["path"].strip("/")
@@ -143,7 +150,8 @@ class FakeDolibarr:
                 "dolibarr_version": "23.0.3",
                 "modules": ["societe", "facture", "propal", "commande", "produit", "api", "restoauth"],
                 "rights": list(user.rights),
-                "token": {"type": "restoauth", "expires_at": int(time.time()) + self.token_lifetime,
+                "token": None if self._bearer(request) not in self.tokens else
+                         {"type": "restoauth", "expires_at": int(time.time()) + self.token_lifetime,
                           "connection": 1, "client": "Test client"},
                 "api_rights_rules": self.rights_rules,
             })
