@@ -142,6 +142,9 @@ realm `example`. In the Keycloak admin console (Keycloak 26):
 | | Valid redirect URIs | `https://erp.example.com/core/modules/openid_connect/callback.php` (exactly this, no wildcard) |
 | | Valid post logout redirect URIs | `https://erp.example.com/index.php*` (with the `*`, see the **Logout URL** below) |
 | | Web origins | empty (Dolibarr calls Keycloak from the server, not from the browser) |
+| Logout settings | Front channel logout | **On** |
+| | Front-channel logout URL | `https://erp.example.com/user/logout.php?noredirect=1` (Dolibarr's own logout page) |
+| | Backchannel logout URL | empty (Dolibarr has no endpoint for it) |
 
 Why these values:
 
@@ -158,6 +161,20 @@ Why these values:
   the address Keycloak is asked to return to is `https://erp.example.com/index.php` followed by
   `?client_id=...`. Without the trailing `*`, Keycloak refuses the logout with "Invalid redirect
   uri". The `*` only allows addresses that start with Dolibarr's own `index.php`.
+- **Front-channel logout to Dolibarr.** A Keycloak logout (for example LibreChat's **Log out**, see
+  [Log out of Keycloak too](#env-log-out-of-keycloak-too)) ends only Keycloak's own session unless
+  Keycloak knows how to log the user out of Dolibarr. With this URL, Keycloak's logout page loads
+  Dolibarr's logout page in the browser, and Dolibarr's session ends too. Without it, Dolibarr stays
+  logged in as the previous user: if someone else then logs into LibreChat in the same browser and
+  connects Dolibarr, restoauth's consent page is shown for the previous user's Dolibarr account, and
+  that person's token ends up in the new user's LibreChat. `noredirect=1` keeps Dolibarr from sending
+  the iframe on to Keycloak's logout (the **Logout URL** below). Dolibarr's logout page needs no CSRF
+  token, so a plain page load ends the session.
+- **Side effect.** When Keycloak's logout page loads that URL while Dolibarr's session has already
+  ended, which is always the case after Dolibarr's own **Logout**, Dolibarr shows its login page
+  inside the iframe and remembers the logout page as the page to return to after the next login (for
+  an hour). The next **Use OpenID to login** within that hour then ends on an empty page, logged out
+  again; the login after that works. See check 8.
 
 ### Users in Keycloak
 
@@ -384,9 +401,17 @@ OPENID_POST_LOGOUT_REDIRECT_URI=https://chat.example.com/login
   `DOMAIN_CLIENT` + `/login`, the same URL; the key makes it explicit.
 - When LibreChat still has the user's ID token, Keycloak logs out at once. Otherwise Keycloak first
   asks "Do you want to log out?"; after **Logout** the browser lands on LibreChat's login page.
-- The logout ends the user's Keycloak session for every application, Dolibarr included. Dolibarr's
-  own session and the connection to the MCP server stay: the connection is restoauth's grant, not a
-  login, and ends only as described in the user guide.
+- The logout ends the user's Keycloak session for every application. Dolibarr's own session in the
+  browser ends too, through the **front-channel logout** of the
+  [`dolibarr` client](#keycloak-client-for-dolibarr): Keycloak's logout page loads Dolibarr's logout
+  page in an iframe. The connection to the MCP server stays: it is restoauth's grant for the LibreChat
+  user, not a login, and ends only as described in the user guide.
+- The front-channel logout works only if the browser sends Dolibarr's session cookie inside that
+  iframe. That is the case when Dolibarr and Keycloak are on the same site (like `erp.example.com` and
+  `sso.example.com`). If they are on different domains, browsers that block third-party cookies send
+  no cookie, and Dolibarr stays logged in. It also does not reach a Dolibarr session that was opened
+  with Dolibarr's own login form instead of **Use OpenID to login**. In those cases log out of
+  Dolibarr by hand, or let each person use their own browser profile.
 
 LibreChat sits behind your reverse proxy. The proxy must pass `X-Forwarded-Proto: https` to
 LibreChat. Otherwise LibreChat does not set its session cookie during the Keycloak login, and the
@@ -646,7 +671,10 @@ Keycloak**.
 
 **Expected:** after the logout the browser lands on LibreChat's login page (possibly after Keycloak's
 "Do you want to log out?" with **Logout**). **Sign in with Keycloak** shows Keycloak's login form
-again, and a second user can log in with their own username and password.
+again, and a second user can log in with their own username and password. Opening
+`https://erp.example.com/` in the same browser shows Dolibarr's login page, and when the second user
+connects **Dolibarr** in LibreChat, restoauth's consent page names *their* account in the **User**
+row.
 
 **If not:**
 
@@ -654,6 +682,8 @@ again, and a second user can log in with their own username and password.
 |---|---|
 | Keycloak: "Invalid redirect uri" after **Log out** | `OPENID_POST_LOGOUT_REDIRECT_URI` is not listed exactly under **Valid post logout redirect URIs** of the `librechat` client. |
 | **Sign in with Keycloak** logs the previous user in without a form | `OPENID_USE_END_SESSION_ENDPOINT` is not `true` (restart LibreChat after changing `.env`), so LibreChat never sent the browser to Keycloak's logout. |
+| Dolibarr is still logged in as the previous user, and the consent page names the previous user | The `dolibarr` client has no **Front channel logout** with the **Front-channel logout URL** `https://erp.example.com/user/logout.php?noredirect=1`, or Dolibarr and Keycloak are on different sites (see [Log out of Keycloak too](#env-log-out-of-keycloak-too)). Click **Deny**, log out of Dolibarr, then connect again. |
+| After the Keycloak login Dolibarr shows an empty page at `user/logout.php` and is logged out again | The [side effect](#keycloak-client-for-dolibarr) of the front-channel logout after Dolibarr's own **Logout** (or after Dolibarr's session had timed out). Log in again; the second login works. In LibreChat, connect **Dolibarr** again. |
 | LibreChat refuses the login as rate limited (`auth_rate_limited`) | LibreChat allows about 7 logins per 5 minutes per IP. Wait five minutes. |
 
 ## Both MCP servers in one LibreChat

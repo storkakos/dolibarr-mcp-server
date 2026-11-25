@@ -1,5 +1,6 @@
 """TEST ONLY. Keycloak through its admin REST API: realm `example`, client `dolibarr` for Dolibarr's
-openid_connect login, client `librechat` for the LibreChat login, and the test users.
+openid_connect login (with front-channel logout to Dolibarr's logout page), client `librechat` for the
+LibreChat login, and the test users.
 
 Same values as the admin-console tables in docs/setup/example-keycloak-librechat.md. Differences for
 the local test, each on purpose: the realm itself (the manual assumes it exists); fixed client
@@ -52,8 +53,10 @@ def setup_realm() -> None:
         _ok(s.post(A, json={"realm": REALM, "enabled": True}))
     R = f"{A}/{REALM}"
 
-    def client(cid, name, root, redirect, post_logout, secret):
+    def client(cid, name, root, redirect, post_logout, secret, frontchannel_logout_url=""):
         body = {
+            # Front-channel logout: on a Keycloak logout the browser loads this URL in an iframe.
+            "frontchannelLogout": bool(frontchannel_logout_url),
             "clientId": cid, "name": name, "protocol": "openid-connect", "enabled": True,
             "publicClient": False, "clientAuthenticatorType": "client-secret", "secret": secret,
             "authorizationServicesEnabled": False, "standardFlowEnabled": True,
@@ -64,6 +67,8 @@ def setup_realm() -> None:
                            "post.logout.redirect.uris": post_logout},
             "rootUrl": root, "baseUrl": root + "/", "redirectUris": [redirect], "webOrigins": [],
         }
+        if frontchannel_logout_url:
+            body["attributes"]["frontchannel.logout.url"] = frontchannel_logout_url
         found = s.get(f"{R}/clients", params={"clientId": cid}).json()
         if found:
             current = _ok(s.get(f"{R}/clients/{found[0]['id']}")).json()
@@ -75,8 +80,12 @@ def setup_realm() -> None:
     # Dolibarr 23's openid_connect callback (core/lib/openid_connect.lib.php) and its login page after logout.
     # The post-logout URI ends in a wildcard: Dolibarr 23 appends "?client_id=..&returnTo=.." to the
     # configured logout URL, so the post_logout_redirect_uri Keycloak receives is index.php plus that text.
+    # Front-channel logout to Dolibarr's logout page: a Keycloak logout (e.g. LibreChat's Log out) ends the
+    # Dolibarr session in the browser too, so the next user does not consent as the previous one.
+    # user/logout.php needs no CSRF token; noredirect=1 keeps it from sending the iframe on to Keycloak's
+    # logout (MAIN_AUTHENTICATION_OIDC_LOGOUT_URL).
     client("dolibarr", "Dolibarr", DOLIBARR, f"{DOLIBARR}/core/modules/openid_connect/callback.php",
-           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR)
+           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR, f"{DOLIBARR}/user/logout.php?noredirect=1")
     # LibreChat's OpenID login callback (OPENID_CALLBACK_URL in librechat/librechat.env) and its login page
     # after logout (OPENID_POST_LOGOUT_REDIRECT_URI). Without the latter, Keycloak answers LibreChat's
     # logout with "Invalid redirect uri" and keeps the session.
