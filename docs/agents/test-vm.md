@@ -64,10 +64,13 @@ A whole run of `test-stack/` (start, checks, clean-up) from Git Bash in your che
 ```sh
 RUN=dl-ti02 bash scripts/stack-on-vm.sh                # Caddy stack, all checks
 RUN=dl-ti02 bash scripts/stack-on-vm.sh --nginx        # nginx variant (adds compose.nginx.yaml)
+RUN=dl-ti02 bash scripts/stack-on-vm.sh --groups oauth,rights   # only these check groups
 RUN=dl-ti02 bash scripts/stack-on-vm.sh -- -v          # arguments after -- go to checks.py
 ```
 
-It copies the working tree to `/root/dolibarr-mcp-server-$RUN`, takes a VM slot (see [Sharing the VM](#sharing-the-vm)), makes the test certificates, starts the stack as compose project `$RUN` with `TEST_TAG=$RUN` (images `dolibarr-mcp-test-dolibarr:$RUN`, `dolibarr-mcp-server:test-stack-$RUN`, `dolibarr-mcp-test-client:$RUN`), waits until the setup is complete, runs the checks (`docker compose run --rm client python checks.py`) with their output straight through, and exits with their exit code. Afterwards it always takes the stack down with its volumes and removes its images, its folder and its slot, also on failure or Ctrl-C. The build and start output goes to a log on the VM; when the start fails, the script prints its last lines and the setup's log.
+It copies the working tree to `/root/dolibarr-mcp-server-$RUN`, takes a VM slot (see [Sharing the VM](#sharing-the-vm)), makes the test certificates, starts the stack as compose project `$RUN` with `TEST_TAG=$RUN` (images `dolibarr-mcp-test-dolibarr:$RUN`, `dolibarr-mcp-server:test-stack-$RUN`, `dolibarr-mcp-test-client:$RUN`), starts only the services the chosen check groups need (see below), waits until the setup is complete, prints the started containers with their RAM, runs the checks (`docker compose run --rm client python checks.py <groups>`) with their output straight through, and exits with their exit code. Afterwards it always takes the stack down with its volumes and removes its images, its folder and its slot, also on failure or Ctrl-C. The build and start output goes to a log on the VM; when the start fails, the script prints its last lines and the setup's log.
+
+**Check groups** (`--groups`, default `all`): the checks are split into the groups `oauth`, `rights`, `ends`, `librechat` and `proxy` (see [test-stack/README.md](../../test-stack/README.md#check-groups)); these names are what the queue's `checks:` field takes. `--groups oauth,rights` runs only those groups (`rights`, `ends` and `proxy` bring `oauth` along, they build on it) and starts only the setup and its dependencies: neither LibreChat nor Mongo. Only a list with `librechat` (or `all`) starts them. Unknown names stop the script before it touches the VM (exit 2). Before the first LibreChat check the checks wait until LibreChat answers (up to 300 s, `LIBRECHAT_READY_TIMEOUT`).
 
 | Exit code | Meaning |
 | --- | --- |

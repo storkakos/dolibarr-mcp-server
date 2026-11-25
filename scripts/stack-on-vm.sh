@@ -3,11 +3,14 @@
 #
 #   RUN=dl-ti02 bash scripts/stack-on-vm.sh                 # Caddy stack, all checks
 #   RUN=dl-ti02 bash scripts/stack-on-vm.sh --nginx         # nginx variant (compose.nginx.yaml)
+#   RUN=dl-ti02 bash scripts/stack-on-vm.sh --groups oauth,rights   # only these check groups
 #   RUN=dl-ti02 bash scripts/stack-on-vm.sh -- -v           # everything after -- goes to checks.py
 #
 # Steps: copy the working tree (tracked and untracked files, not git-ignored ones) to
 # /root/<repo>-$RUN on the VM, wait for a free VM slot, make the test certificates, start the stack
-# as compose project $RUN with image tags ending in $RUN (TEST_TAG), run the checks and print their output, then always
+# as compose project $RUN with image tags ending in $RUN (TEST_TAG) (only the services the chosen check
+# groups need: groups without LibreChat start neither LibreChat nor Mongo), wait for the setup, print
+# the started containers and their RAM, run the checks and print their output, then always
 # take the stack down with its volumes and remove its images, folder and slot, also on failure or
 # Ctrl-C. Exits with the checks' exit code.
 #
@@ -46,7 +49,11 @@ COMPOSE_FILES=(-f compose.yaml)                # --nginx adds -f compose.nginx.y
 # Run in STACK_DIR on the VM before the start. The nginx variant builds its configuration inside the
 # proxy container (nginx/build-conf.sh), so it needs no step here.
 PREPARE='sh make-certs.sh >/dev/null'
-CHECKS=(run --rm client python checks.py)      # compose arguments of the check run
+CHECKS=(run --rm client python checks.py)      # compose arguments of the check run (groups are added)
+# Compose arguments that print the services to start for the groups that follow (checks.py --services).
+SERVICES=(run --rm --no-deps client python checks.py --services)
+SETUP_SERVICE=setup                            # one-shot setup; the checks start once it completed
+GROUP_DIR=test-stack/client/groups             # one file <group>.py per check group
 # The images this run builds, among those of `compose config --images`: tagged :$RUN, and the MCP
 # server's dolibarr-mcp-server:test-stack-$RUN (TEST_TAG). Extended regex; the word RUN is replaced by $RUN.
 IMAGE_TAG_RE='(:|:test-stack-)RUN$'
@@ -62,6 +69,8 @@ ME=stack-on-vm
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --nginx) COMPOSE_FILES+=(-f compose.nginx.yaml); shift ;;
+    --groups) [ "$#" -ge 2 ] || { echo "$ME: --groups needs a list, e.g. --groups oauth,rights" >&2; exit 2; }
+              GROUPS_ARG="$2"; shift 2 ;;
     --) shift; break ;;
     *) echo "$ME: unknown option '$1' (arguments for the checks go after --)" >&2; exit 2 ;;
   esac
@@ -72,6 +81,20 @@ if ! [[ "$RUN" =~ ^[a-z0-9][a-z0-9-]*$ ]] || [[ "$RESERVED_RUNS" == *" $RUN "* ]
   echo "$ME: RUN must be lowercase letters, digits and -, and not one of:$RESERVED_RUNS(got '$RUN')" >&2
   exit 2
 fi
+# Check groups: --groups a,b (or "all", the default). Each name must have its file in GROUP_DIR.
+GROUPS_ARG="${GROUPS_ARG:-all}"
+if ! [[ "$GROUPS_ARG" =~ ^[a-z0-9_]+(,[a-z0-9_]+)*$ ]]; then
+  echo "$ME: --groups takes names separated by commas, e.g. oauth,rights (got '$GROUPS_ARG')" >&2
+  exit 2
+fi
+CHECK_GROUPS="${GROUPS_ARG//,/ }"
+for g in $CHECK_GROUPS; do
+  if [ "$g" != all ] && [ ! -f "$GROUP_DIR/$g.py" ]; then
+    known="$(cd "$GROUP_DIR" && ls *.py | grep -v '^__' | sed 's/\.py$//' | tr '\n' ' ')"
+    echo "$ME: unknown check group '$g' (groups: ${known}or all)" >&2
+    exit 2
+  fi
+done
 VM_HOST="${VM_HOST:-root@192.168.178.25}"
 DIR="/root/$REPO_NAME-$RUN"
 SLOT_DIR=/var/lib/test-vm-slots                # shared by all repos that use the VM
@@ -202,10 +225,15 @@ if vm "[ -f $LLM_ENV ]"; then
 else
   echo "$ME: LLM key: no shared LLM key at $LLM_ENV, the chat checks will report SKIP"
 fi
-echo "$ME: starting the stack (build, Dolibarr install, setup: about $START_MINUTES minutes)"
+echo "$ME: starting the stack for the check groups: $CHECK_GROUPS (build, Dolibarr install, setup: about $START_MINUTES minutes)"
+# Build, ask the checks which services their groups need (SERVICES), start only those (compose adds
+# their dependencies) and wait until the one-shot setup has completed. Without LibreChat in the list
+# nothing waits for the setup on its own, hence the explicit wait.
 rc=0
 vm "$IN_STACK && $PREPARE && $DC config --quiet &&
-    timeout $START_TIMEOUT $DC up -d --build --quiet-pull > $DIR/start.log 2>&1" || rc=$?
+    timeout $START_TIMEOUT sh -c '$DC build --quiet &&
+      s=\$($DC ${SERVICES[*]} $CHECK_GROUPS) && echo \"services to start: \$s\" &&
+      $DC up -d --quiet-pull \$s && $DC wait $SETUP_SERVICE' > $DIR/start.log 2>&1" || rc=$?
 if [ "$rc" -ne 0 ]; then
   [ "$rc" -eq 124 ] && why="did not finish within ${START_TIMEOUT}s" || why="failed (exit $rc)"
   echo "$ME: the stack start $why. Last lines of the start log and of the setup:" >&2
@@ -213,11 +241,21 @@ if [ "$rc" -ne 0 ]; then
   exit 3
 fi
 echo "$ME: stack is up"
+# What runs, and what it costs: the running containers of this run with their RAM, the sum, and the
+# VM's available RAM. Only for the record; a failure here does not stop the run.
+vm "sed -n 's/^services to start: /$ME: services started for the groups: /p' $DIR/start.log
+  ids=\$(docker ps -q --filter label=com.docker.compose.project=$RUN)   # never all of the VM's containers
+  [ -z \"\$ids\" ] || docker stats --no-stream --format '{{.Name}} {{.MemUsage}}' \$ids |
+    awk '{ v = \$2; u = v; gsub(/[0-9.]/, \"\", u); sub(/[A-Za-z]+\$/, \"\", v)
+           mb = (u == \"GiB\") ? v * 1024 : (u == \"KiB\") ? v / 1024 : (u == \"B\") ? v / 1048576 : v
+           sum += mb; printf \"$ME:   container %s %.0f MB\\n\", \$1, mb }
+         END { printf \"$ME: %d containers running, %.0f MB RAM in all\\n\", NR, sum }'
+  awk '/^MemAvailable:/{ printf \"$ME: VM RAM available now: %d MB\\n\", \$2 / 1024 }' /proc/meminfo" || true
 
 # 4. The checks: output straight through, exit code unchanged. A copy goes to a local file for the
 # key scan below (PIPESTATUS keeps the checks' code; vm's own exit 255 ends only the subshell).
-args=""
-[ "$#" -gt 0 ] && args=" $(printf '%q ' "$@")"
+args=" $CHECK_GROUPS"
+[ "$#" -gt 0 ] && args+=" $(printf '%q ' "$@")"
 checks_out="$(mktemp)"
 # set +e around the pipe: with errexit and pipefail a failing check would end the script here,
 # before the key scan; PIPESTATUS is read right after the pipe, before set -e changes it.
