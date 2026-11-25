@@ -6,7 +6,7 @@ A throwaway VM on the maintainer's LAN for running the tests and anything that n
 | --- | --- |
 | Host | `192.168.178.25` (only reachable from the maintainer's network) |
 | User | `root` |
-| OS | Debian 13 (trixie), Docker 29, Compose v5, 4 CPUs, 12 GB RAM minimum with ballooning (about 11 GB visible), no swap, 59 GB root disk |
+| OS | Debian 13 (trixie), Docker 29.10, Compose v5.8, 4 CPUs, 12 GB RAM minimum with ballooning (15.5 GB visible on 2026-11-25; the visible amount changes), no swap, 59 GB root disk (about 20 GB used) |
 | Private key | `~/.ssh/itop-mcp-test-vm` (on the maintainer's machine, **never commit it**) |
 | Host key | `~/.ssh/itop-mcp-test-vm.known_hosts` |
 
@@ -85,7 +85,20 @@ RUN names must be unique on the whole VM, across repos: the compose project name
 
 The script is a port of `itop-mcp-server`'s `scripts/stack-on-vm.sh`: everything repo-specific (repo name, stack folder, compose files, prepare step, check command, image tags, reserved RUN names) sits in one block at its top, the rest is the same in both repos. Keep it that way when you change one of them.
 
-If the script was killed so hard that its clean-up could not run (or SSH was gone), clean up by hand as described in [Run the test stack](#run-the-test-stack) and [Clean up](#clean-up) and remove the slot: `rm -f /var/lib/test-vm-slots/dolibarr-mcp-server-$RUN.lease`.
+If the script was killed so hard that its clean-up could not run (or SSH was gone), clean up by hand as described in [A ticket stack killed halfway](#a-ticket-stack-killed-halfway) and remove the slot: `rm -f /var/lib/test-vm-slots/dolibarr-mcp-server-$RUN.lease`.
+
+### A ticket stack killed halfway
+
+When `scripts/stack-on-vm.sh` or a by-hand run died without its clean-up (Ctrl-C that did not get through, lost SSH, killed shell), the stack of that run is still on the VM. Find it and take it down by its project name, which is the bare `$RUN`; nothing else is touched:
+
+```sh
+$SSH "docker ps -a --filter label=com.docker.compose.project=$RUN --format '{{.Names}} {{.Status}}'"   # what is left
+$SSH "docker compose -p $RUN down --volumes --remove-orphans --timeout 5"      # containers, network, volumes, from any folder
+$SSH "docker rmi \$(docker images --format '{{.Repository}}:{{.Tag}}' | grep -E '(:|:test-stack-)$RUN\$')"   # the images tagged :$RUN or :test-stack-$RUN
+$SSH "rm -rf /root/dolibarr-mcp-server-$RUN /var/lib/test-vm-slots/dolibarr-mcp-server-$RUN.lease"   # folder and VM slot
+```
+
+Check afterwards that the first command prints nothing. Use exactly your own `$RUN`: a prefix match would take down other runs. Without the folder, `docker compose -p $RUN down` still works; `docker compose config` (which the script uses to list the images) does not, hence the `docker images` lookup. A pytest container of a killed `test-on-vm.sh` run is `$SSH "docker rm -f $RUN-pytest"`.
 
 ## LLM key
 
@@ -144,7 +157,11 @@ git ls-files -z --cached --others --exclude-standard | tar --null -T - -cf - \
   | $SSH "rm -rf $DIR && mkdir $DIR && tar -xf - -C $DIR"
 ```
 
-The copy has no `.git` folder.
+The copy has no `.git` folder (`stack-on-vm.sh` and `test-on-vm.sh` copy the same way). What does not work because of that:
+
+- Every `git` command in the VM folder fails (`not a git repository`): no `git status`, `diff` or `log` there. Do your git work on the dev machine and copy the result over.
+- A restoauth **checkout** as `RESTOAUTH_LOCAL` does not work on the VM: the build needs the checkout's `.git` folder to build the release ZIP with `git archive` (see [test-stack/README.md](../../test-stack/README.md#restoauth-from-a-local-zip-or-checkout)). Copy a built ZIP instead.
+- Git-ignored files are not copied either: put nothing a run needs into `.env`, `compose.override.yaml`, `certs/`, `logs/` or `.venv/` (the stack makes its own certificates).
 
 `.gitattributes` gives every text file LF line endings, also on Windows with `core.autocrlf=true`, so the copy runs on Linux as-is. A checkout made before that rule existed keeps its CRLF files until they are written again; `git ls-files --eol | grep -v w/lf` lists them. To rewrite them, commit or stash your changes first, then run this in the checkout:
 
@@ -200,6 +217,43 @@ If Docker Hub answers a pull with `429 Too Many Requests` (anonymous pull limit,
 on the VM), pull the same official image from Google's mirror and tag it with its Docker Hub name,
 e.g. `docker pull mirror.gcr.io/library/nginx:1.30.5 && docker tag mirror.gcr.io/library/nginx:1.30.5
 nginx:1.30.5`; base images of the builds (`python:3.13.18-slim`) go the same way.
+
+### restoauth from a local ZIP or checkout
+
+To test a restoauth change that has no release yet, point `RESTOAUTH_LOCAL` at a folder on the Docker host before the build. The stack's `dolibarr/Dockerfile` takes a release ZIP from GitHub by default; `RESTOAUTH_LOCAL` overrides that. Set it for `up` too, or `up --build` falls back to the release. The build log names the source (`restoauth: local ZIP ...`, `restoauth: building ... from the local checkout at <commit>`).
+
+| `RESTOAUTH_LOCAL` is | The build |
+|---|---|
+| a folder with `module_restoauth-<version>.zip` in it (e.g. restoauth's `dist/` after `bash scripts/build-release-zip.sh vX.Y.Z`) | takes that ZIP as it is |
+| a restoauth git checkout (with its `.git` folder) | builds the ZIP from the checkout with `git archive` (tracked files with their uncommitted changes, no untracked files, no `export-ignore` files) |
+
+`<version>` is `RESTOAUTH_VERSION` (pinned in `dolibarr/Dockerfile`); for another version pass `--build-arg RESTOAUTH_VERSION=X.Y.Z`. The build stops if the folder has neither ZIP nor checkout, or if the module descriptor in the ZIP carries another version. On the VM, the folder must be on the VM: copy the ZIP there first, e.g. into your run folder.
+
+```sh
+# on the VM, for a run named $RUN:
+$SSH "mkdir -p $DIR/restoauth"
+scp -i ~/.ssh/itop-mcp-test-vm -o UserKnownHostsFile=~/.ssh/itop-mcp-test-vm.known_hosts module_restoauth-*.zip root@192.168.178.25:$DIR/restoauth/
+$SSH "cd $DIR/test-stack && export TEST_TAG=$RUN RESTOAUTH_LOCAL=$DIR/restoauth LLM_ENV_FILE=/root/shared/llm.env && sh make-certs.sh >/dev/null && docker compose -p $RUN up -d --build --quiet-pull"
+```
+
+**The checkout mode does not work on the VM.** The copy to the VM has no `.git` folder (see [Copy the working tree over](#copy-the-working-tree-over)), and the restoauth checkout mode needs `.git` to build the ZIP with `git archive`. Copy a built ZIP instead.
+
+### Re-run after a settings change (cheap)
+
+`stack-on-vm.sh` always takes the stack down at the end, so a re-run through it starts from scratch (5 to 10 minutes). When you only changed a setting and want to see the checks again, keep the stack and restart just the service that reads the setting. This is by hand, so you take the slot and clean up yourself: start the stack like the script does, **under a RUN name of its own**, and take it down when you are done (see [Clean up](#clean-up)).
+
+```sh
+RUN=dl-ti04; DIR=/root/dolibarr-mcp-server-$RUN
+# once: copy (see "Copy the working tree over"), take a slot (lease file, see "Sharing the VM"), then
+$SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && sh make-certs.sh >/dev/null &&
+      docker compose -p $RUN up -d --build --quiet-pull"       # returns when the setup is complete
+# after each change: copy only the changed files, WITHOUT the rm -rf of the full copy (it would remove certs/)
+git diff --name-only HEAD | tar -T - -cf - | $SSH "tar -xf - -C $DIR"      # plus new files: git ls-files -o --exclude-standard
+$SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && docker compose -p $RUN restart dolibarr"
+$SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && docker compose -p $RUN run --rm client python checks.py"      # or: ... checks.py <groups>
+```
+
+The settings live in `dolibarr/configure.php` (run by the one-shot `setup` service) and in the `dolibarr` container's environment (`TEST_*` in `compose.yaml`). After a settings change, restart the `dolibarr` service and wait until it is healthy again (`docker compose -p $RUN ps dolibarr` shows `healthy`); the checks wait for the setup's healthcheck themselves. A changed `librechat.yaml` or `librechat.env` needs `restart librechat` (or `up -d librechat` for env changes); changes to the MCP server's `src/` need `up -d --build mcp`.
 
 Take it down again with its volumes and its images:
 
