@@ -31,12 +31,12 @@ docker compose logs -f setup      # wait for "setup complete" (a few minutes on 
 
 `setup` ends with checks through the proxy and stops with `setup check failed: ...` if one fails.
 `docker compose ps` shows `dolibarr` as `healthy` once Dolibarr is configured. LibreChat starts after
-`setup` completed.
+`setup` completed; the LibreChat checks wait until it answers (see [Check groups](#check-groups)).
 
 ## End-to-end checks
 
 ```sh
-docker compose run --rm client    # waits for "setup complete", then runs client/checks.py
+docker compose run --rm client    # waits for "setup complete", then runs client/checks.py (all groups, see Check groups)
 ```
 
 `checks.py` acts as an MCP client and as the users' browsers, through the proxy, and prints one
@@ -60,6 +60,78 @@ The checks register a new client on every run and leave it and the revoked conne
 they do not depend on what an earlier run left. The OAuth flow checks use LibreChat's callback
 (`chat.example.com`, on the allowlist) as their redirect URI: they stop at that redirect and read the
 code from it, as a client would. In the LibreChat checks, LibreChat itself receives it.
+
+## Check groups
+
+The checks are split into groups, one file per group in `client/groups/`. The file name is the
+group name. Groups run in a fixed order, whatever order you name them in:
+
+| Group | File | Checks (part of the table above) | Builds on | Needs |
+|---|---|---|---|---|
+| `oauth` | `client/groups/oauth.py` | OAuth flow and its negative cases | | setup only |
+| `rights` | `client/groups/rights.py` | Rights, and `bob` without the connect right | `oauth` | setup only |
+| `ends` | `client/groups/ends.py` | How a connection ends | `oauth` | setup only |
+| `librechat` | `client/groups/librechat.py` | Example setup: LibreChat | | `librechat` (and Mongo) |
+| `proxy` | `client/groups/proxy.py` | Reverse proxy (path prefix: nginx variant only, otherwise SKIP) | `oauth` | setup only |
+
+"Setup only" means the one-shot `setup` service and what it depends on: proxy, MariaDB, Dolibarr,
+Keycloak and the MCP server. LibreChat and Mongo are not needed and need not run. "Builds on": the
+group uses what that group set up (the registered client, `anna`'s connection; see `state` in
+`client/checklib.py`), so naming `rights` alone runs `oauth` first ("also running oauth").
+
+```sh
+docker compose run --rm client python checks.py                     # all groups
+docker compose run --rm client python checks.py oauth rights        # only these (also: oauth,rights)
+docker compose run --rm client python checks.py --list              # groups and their checks
+```
+
+Only groups without LibreChat, on a stack that starts neither LibreChat nor Mongo (clearly less
+RAM): start the `setup` service alone (compose starts its dependencies) and wait until it is done.
+The `client` service does not start LibreChat by itself:
+
+```sh
+docker compose up -d --build setup && docker compose wait setup     # exit code 0: setup complete
+docker compose run --rm client python checks.py oauth rights ends proxy
+```
+
+`python checks.py --services <groups>` prints the services to start for those groups (`setup`, plus
+`librechat` for the group `librechat`); `scripts/stack-on-vm.sh --groups` uses it. Before the first
+check of the group `librechat`, the checks wait until LibreChat answers (`/health`, and `/api/config`
+offers the Keycloak login; neither counts against LibreChat's login limit), up to
+`LIBRECHAT_READY_TIMEOUT` seconds (default 300). If it does not, every check of the group fails with
+"not run: LibreChat at … not ready within … s".
+
+### Add a check
+
+Add it to the group's file, under the other checks of that group:
+
+```python
+@check("rights: what the manual promises, in a few words")
+def _():
+    ...                       # assert what must hold; an exception makes the check FAIL
+    return "detail"           # optional: shown after PASS; return "SKIP <reason>" to skip
+```
+
+Checks run in the order of the file. A check may use what an earlier check of the same group left
+behind, and the `state` of a group its group builds on (`needs`), never what another group did:
+each group must also run alone (with the groups it builds on).
+
+### Add a group
+
+A new file `client/groups/<name>.py` (lowercase letters, digits, `_`), no other file changes:
+
+```python
+from checklib import Group, state
+
+group = Group(__name__, "Heading printed before the checks (the manual it checks)", order=60,
+              services=(),     # compose services needed besides the setup, e.g. ("librechat",)
+              ready=None,      # optional: called before the first check, to wait for those services
+              needs=())        # optional: groups whose state it uses, e.g. ("oauth",)
+check = group.check
+```
+
+`order` places the group among the others (10, 20, 30, 40, 50 are taken). Mention the group in the
+table above.
 
 ## nginx variant
 
@@ -200,8 +272,8 @@ dolibarr-mcp-test-client:local`.
 | LibreChat `.env` and `librechat.yaml`: Keycloak login and logout, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
 | nginx variant: nginx as TLS proxy, its configuration assembled from the READMEs' nginx blocks; a second MCP server under a path prefix (see [nginx variant](#nginx-variant)) | `compose.nginx.yaml`, `nginx/build-conf.sh` |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
-| End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
-| User switch in one browser: `anna` connects Dolibarr and logs out of LibreChat, `carl` logs in and connects; `carl` must consent and get a token as `carl`. Runs as a check of `checks.py`; `python user_switch.py` prints each step | `client/user_switch.py` |
+| End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)), one file per check group (see [Check groups](#check-groups)) | `client/groups/*.py`, run by `client/checks.py`; `client/checklib.py`, `client/flows.py` |
+| User switch in one browser: `anna` connects Dolibarr and logs out of LibreChat, `carl` logs in and connects; `carl` must consent and get a token as `carl`. Runs as a check of the group `librechat`; `python user_switch.py` prints each step | `client/user_switch.py` |
 
 Differences from the example setup, all for a local test: the Keycloak realm is created (the manual
 assumes it exists); the client secrets are fixed test values instead of being copied from the
@@ -346,6 +418,6 @@ example the iTop test stack), stop that one first; the hostnames cannot be sent 
   `docs/agents/test-vm.md`).
 - LibreChat limits logins per IP: it counts every request under `/oauth/` (start and callback, so two
   per login, and also the "connected" page after an MCP server's OAuth callback, which the checks do
-  not open) against `LOGIN_MAX` 7 per `LOGIN_WINDOW` 5 minutes. `checks.py` logs into LibreChat five
+  not open) against `LOGIN_MAX` 7 per `LOGIN_WINDOW` 5 minutes. The group `librechat` logs into LibreChat five
   times; when a login would hit the limit (for example because `checks.py` ran shortly before), it waits
   for the window to end instead of failing, which makes that run up to five minutes longer.

@@ -8,7 +8,8 @@ LibreChat got a token for A's Dolibarr account.
 
     docker compose run --rm client python user_switch.py   # prints each step, exit 1 on the wrong user
 
-checks.py runs the same scenario as one check (see run()). A is anna, B is carl (bob may not connect
+checks.py runs the same scenario as one check of the group "librechat" (groups/librechat.py, see
+run()). A is anna, B is carl (bob may not connect
 applications in this stack).
 """
 import re

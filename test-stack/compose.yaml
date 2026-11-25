@@ -5,6 +5,10 @@
 #   docker compose up -d --build      # installs and configures everything
 #   docker compose logs -f setup      # wait for "setup complete"
 #   docker compose run --rm client    # end-to-end checks: OAuth flow, rights, connection end, LibreChat
+# Only check groups without LibreChat (see README.md, "Check groups"): start the setup alone, which
+# starts neither LibreChat nor Mongo, then run those groups:
+#   docker compose up -d --build setup && docker compose wait setup
+#   docker compose run --rm client python checks.py oauth rights
 # nginx instead of Caddy (on demand, mandatory before a release): add -f compose.yaml -f compose.nginx.yaml.
 # TEST_TAG (default: local) names the three images built here, so runs on a shared Docker host
 # keep their own images apart.
@@ -132,6 +136,7 @@ services:
       REQUESTS_CA_BUNDLE: /ca.crt
     <<: *net
 
+  # mongo and librechat are needed only by the check group "librechat" (client/groups/librechat.py).
   mongo:
     image: mongo:8.0.38
     command: ["mongod", "--noauth"]
@@ -165,7 +170,8 @@ services:
     <<: *net
 
   # End-to-end checks (client/checks.py): OAuth flow, rights, how a connection ends and LibreChat. Waits for "setup complete".
-  #   docker compose run --rm client
+  #   docker compose run --rm client python checks.py [GROUP ...]
+  # It does not start LibreChat: the group librechat waits until LibreChat answers (start the whole stack).
   client:
     image: dolibarr-mcp-test-client:${TEST_TAG:-local}
     profiles: [checks]
@@ -173,8 +179,6 @@ services:
     depends_on:
       setup:
         condition: service_completed_successfully
-      librechat:
-        condition: service_started
     volumes:
       - ./certs/ca.crt:/ca.crt:ro
     environment:
