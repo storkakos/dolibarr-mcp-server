@@ -37,7 +37,7 @@ These are `vm-runner`'s job, not the ticket agent's:
 
 - the VM rules in [Sharing the VM](#sharing-the-vm): at most 3 stacks at once, a VM slot per stack, enough free RAM;
 - unique RUN names across repos (prefixed `it-`, `dl-`, `ra-`);
-- the shared LLM key on the VM (`/root/shared/llm.env`): pointing runs at it, never printing it;
+- the shared LLM key on the VM (`/root/shared/llm.env`, see [LLM key](#llm-key)): pointing runs at it, never printing it;
 - the [clean-up](#clean-up) after every run: stacks, volumes, networks, images, folders and slots of its RUNs, plus its integration branches and worktrees (local only, never pushed).
 
 The rest of this file is the reference for the runner, and for the maintainer working alone without the queue.
