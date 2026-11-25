@@ -248,12 +248,12 @@ RUN=dl-ti04; DIR=/root/dolibarr-mcp-server-$RUN
 $SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && sh make-certs.sh >/dev/null &&
       docker compose -p $RUN up -d --build --quiet-pull"       # returns when the setup is complete
 # after each change: copy only the changed files, WITHOUT the rm -rf of the full copy (it would remove certs/)
-git diff --name-only HEAD | tar -T - -cf - | $SSH "tar -xf - -C $DIR"      # plus new files: git ls-files -o --exclude-standard
-$SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && docker compose -p $RUN restart dolibarr"
+git diff --name-only --diff-filter=d HEAD | tar -T - -cf - | $SSH "tar -xf - -C $DIR"      # plus new files: git ls-files -o --exclude-standard; deleted files: rm them in $DIR by hand
+$SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && docker compose -p $RUN up -d --build dolibarr"      # recreates the container: new TEST_* values and a rebuilt configure.php
 $SSH "cd $DIR/test-stack && export TEST_TAG=$RUN LLM_ENV_FILE=/root/shared/llm.env && docker compose -p $RUN run --rm client python checks.py"      # or: ... checks.py <groups>
 ```
 
-The settings live in `dolibarr/configure.php` (run by the one-shot `setup` service) and in the `dolibarr` container's environment (`TEST_*` in `compose.yaml`). After a settings change, restart the `dolibarr` service and wait until it is healthy again (`docker compose -p $RUN ps dolibarr` shows `healthy`); the checks wait for the setup's healthcheck themselves. A changed `librechat.yaml` or `librechat.env` needs `restart librechat` (or `up -d librechat` for env changes); changes to the MCP server's `src/` need `up -d --build mcp`.
+The settings live in `dolibarr/configure.php` and in the `dolibarr` container's environment (`TEST_*` in `compose.yaml`). `configure.php` is copied into the Dolibarr image (`dolibarr/Dockerfile`) and run by `dolibarr/50-test-stack.sh` on every start of the container. So after a settings change the container has to be **recreated**, not restarted: `docker compose restart` keeps the old environment and the old image. Use `up -d dolibarr` for a changed `TEST_*` value and `up -d --build dolibarr` for a changed `configure.php`, then wait until it is healthy again (`docker compose -p $RUN ps dolibarr` shows `healthy`); the checks wait for the setup's healthcheck themselves. A changed `librechat.yaml` or `librechat.env` needs `restart librechat` (or `up -d librechat` for env changes); changes to the MCP server's `src/` need `up -d --build mcp`.
 
 Take it down again with its volumes and its images:
 
