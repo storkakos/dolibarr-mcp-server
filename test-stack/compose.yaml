@@ -150,7 +150,8 @@ services:
     env_file:
       - ./librechat/librechat.env
       # Your own LLM key, never committed (see README). Without it, the chat checks are skipped.
-      - path: ./llm.env
+      # LLM_ENV_FILE points elsewhere, e.g. at the test VM's shared key (scripts/stack-on-vm.sh).
+      - path: ${LLM_ENV_FILE:-./llm.env}
         required: false
     environment:
       HOST: 0.0.0.0
@@ -181,7 +182,7 @@ services:
       # The expiry check waits at most this long for the access token lifetime, else it is skipped
       EXPIRY_MAX_WAIT: "${EXPIRY_MAX_WAIT:-300}"
     env_file:
-      - path: ./llm.env
+      - path: ${LLM_ENV_FILE:-./llm.env}
         required: false
     <<: *net
 
