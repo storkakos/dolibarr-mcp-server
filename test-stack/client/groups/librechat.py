@@ -5,8 +5,9 @@ report SKIP without it); the Keycloak setup run again keeps client settings it d
 LibreChat logout Keycloak asks for a password and another user logs in; after a LibreChat logout the
 Dolibarr session in the browser has ended too, so the next user consents as themselves
 (client/user_switch.py). Five LibreChat logins in all; LibreChat counts two requests per login against
-its limit of seven per five minutes, and a login that would hit the limit waits for the window instead
-of failing. Needs the services librechat and mongo; before its first check it waits until LibreChat
+its limit (LOGIN_MAX, raised in the test stack, see README "LibreChat's login limit"); a login that would
+hit the limit waits for the window and tries once more, and when refused again the check and those that
+need that login report SKIP, never FAIL. Needs the services librechat and mongo; before its first check it waits until LibreChat
 answers."""
 import os
 import time
@@ -15,7 +16,7 @@ import requests
 
 import flows
 import keycloak_realm
-from checklib import Group
+from checklib import Group, Skip
 from common import CHAT, KC_USERS, REALM, SSO, kc_admin
 
 # Seconds to wait for LibreChat before the first check of this group (it boots after the setup).
@@ -51,15 +52,34 @@ group = Group(__name__, "Example setup: LibreChat (docs/setup/example-keycloak-l
               services=("librechat",), ready=wait_for_librechat)
 check = group.check
 anna, bob, carl, dave = KC_USERS
-chats: dict = {}
+skipped: dict = {}  # user -> why their LibreChat login was skipped (LibreChat's login limit)
+
+
+class _Sessions(dict):
+    """The LibreChat sessions of earlier checks by user name. If that login was skipped because of
+    LibreChat's login limit, asking for the session skips the later check too (with the same reason)
+    instead of failing with a KeyError. (_whoami_chat reads chats[...] directly, so this is done here.)"""
+
+    def __missing__(self, key):
+        if key in skipped:
+            raise Skip(f"needs {key}'s LibreChat login, skipped: {skipped[key]}")
+        raise KeyError(key)
+
+
+chats = _Sessions()
 
 
 def _librechat(user):
     lc = flows.LibreChat(user[0], user[1])
-    me = lc.login()
+    try:
+        me = lc.login()
+    except Skip as e:
+        skipped[user[0]] = str(e)
+        raise
     assert me.get("email") == user[4], me
     chats[user[0]] = lc
-    return f"{me.get('name')} <{me.get('email')}>, PKCE {lc.pkce}, LibreChat login requests left {lc.login_budget}"
+    return (f"{me.get('name')} <{me.get('email')}>, PKCE {lc.pkce}, LibreChat login requests left {lc.login_budget}"
+            + (f", waited {lc.waited} s for LibreChat's login limit" if lc.waited else ""))
 
 
 def _connect(user):
@@ -145,7 +165,7 @@ def _():
 @check("example 8: after a LibreChat logout Keycloak asks for a password, and another user logs in")
 def _():
     # One more LibreChat login (bob) on top of anna's and carl's. LibreChat counts two requests per login
-    # against its limit of 7 per 5 minutes; if the budget is used up, LibreChat.login waits for the window.
+    # against LOGIN_MAX (raised in the test stack); if the budget is used up, LibreChat.login waits for the window.
     lc = chats[carl[0]]
     out = lc.logout()
     assert out["end_session"] == f"{SSO}/realms/{REALM}/protocol/openid-connect/logout", out

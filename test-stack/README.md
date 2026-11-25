@@ -52,7 +52,7 @@ project name and image tags, from start to clean-up (see `docs/agents/test-vm.md
 | OAuth flow | discovery (401 challenge, protected resource metadata, authorization server metadata at the server root); dynamic registration; authorize, Dolibarr login through Keycloak, consent page with the user's rights; token with PKCE, code used only once; the token works at the MCP server and the Dolibarr REST API; refresh with rotation (old access token dead); refresh token reuse revokes the whole connection; revoke (RFC 7009) |
 | Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
 | How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one; with a lifetime longer than `EXPIRY_MAX_WAIT` (300 s) this check is reported as `SKIP` with the reason. Each refusal is checked to happen before the token would have expired by itself |
-| Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 8) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. Running the Keycloak setup again keeps an attribute, a redirect URI and a post-logout redirect URI that another setup put on the `librechat` client. `carl` logs out of LibreChat: LibreChat sends the browser to Keycloak's logout, Keycloak ends the session and sends it back to LibreChat's login page; **Sign in with Keycloak** then shows Keycloak's login form again and `bob` logs in. User switch in one browser: `anna` connects Dolibarr and logs out; Keycloak's front-channel logout ends her Dolibarr session, so when `carl` logs in and connects in the same browser, the consent page names `carl` and the new connection is his (`client/user_switch.py`). Five LibreChat logins in all; a login that would hit LibreChat's login limit waits for its window. The two chat checks are skipped without an [LLM key](#llm-key). |
+| Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 8) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. Running the Keycloak setup again keeps an attribute, a redirect URI and a post-logout redirect URI that another setup put on the `librechat` client. `carl` logs out of LibreChat: LibreChat sends the browser to Keycloak's logout, Keycloak ends the session and sends it back to LibreChat's login page; **Sign in with Keycloak** then shows Keycloak's login form again and `bob` logs in. User switch in one browser: `anna` connects Dolibarr and logs out; Keycloak's front-channel logout ends her Dolibarr session, so when `carl` logs in and connects in the same browser, the consent page names `carl` and the new connection is his (`client/user_switch.py`). Five LibreChat logins in all; a login that would hit [LibreChat's login limit](#librechats-login-limit) waits for its window or reports SKIP. The two chat checks are skipped without an [LLM key](#llm-key). |
 | Reverse proxy | restoauth's metadata at the server root and in the issuer path, as `oauth-authorization-server` and `openid-configuration` (the discovery rules); in the [nginx variant](#nginx-variant) only: the MCP server under a path prefix answers its `401` challenge with the prefixed metadata URL, the metadata names the prefixed resource, and `anna` connects for that resource and calls `whoami` through the prefix (behind Caddy these two are `SKIP`) |
 | Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403; `anna`'s own Dolibarr API key reads her third parties at Dolibarr's REST API (`DOLAPIKEY`), `restoauth/me` answers for it with `"token": null`, and the MCP server refuses it with `401` and the resource metadata challenge |
 
@@ -229,8 +229,8 @@ docs).
 
 The model's answers differ from run to run. Look at every picture before you commit it: the
 questions must be answered from a tool call (**Ran ... in dolibarr**), and only the example
-hostnames and test users may be visible. LibreChat allows about 7 logins per 5 minutes; the script
-needs three, so wait five minutes between two runs.
+hostnames and test users may be visible. The script needs three LibreChat logins; the test stack's
+raised [login limit](#librechats-login-limit) allows runs in a row.
 
 On the test VM, run it under your own project name, with `TEST_TAG=$RUN docker compose -p $RUN run
 --rm screenshots`, then copy `docs/images/` back to your checkout (see `docs/agents/test-vm.md`).
@@ -410,14 +410,35 @@ blocks the script, start it with `powershell -ExecutionPolicy Bypass -File .\ope
 The browser needs port 443 on the Docker host. If another stack already publishes 443 there (for
 example the iTop test stack), stop that one first; the hostnames cannot be sent to another port.
 
+## LibreChat's login limit
+
+LibreChat limits logins per IP. It counts every request under `/oauth/`: the start and the callback
+of a login (two per login), and also the "connected" page after an MCP server's OAuth callback (the
+checks do not open it). Its settings are `LOGIN_MAX` requests per `LOGIN_WINDOW` minutes, by default
+7 per 5, in a fixed window that starts with the first request. Over the limit LibreChat answers
+`auth_rate_limited`. The check group `librechat` logs into LibreChat five times (ten requests), so with
+LibreChat's default a single run already reaches the limit and a second run right after it would too.
+
+- **The setting**: the test stack sets `LOGIN_MAX` on the `librechat` service from
+  `TEST_LIBRECHAT_LOGIN_MAX`, **100 by default** (`compose.yaml`). That is enough for many check runs in
+  one window. `LOGIN_WINDOW` keeps LibreChat's 5 minutes. The setting is in `compose.yaml`, not in
+  `librechat/librechat.env`, because that file follows the example setup, and
+  `docs/setup/example-keycloak-librechat.md` keeps LibreChat's normal limit: a real install should not
+  raise it. To try the checks with the normal limit:
+  `TEST_LIBRECHAT_LOGIN_MAX=7 docker compose up -d librechat` (recreates only LibreChat).
+- **When a check still hits it** (normal limit, or another client on the same IP): before a login the
+  checks look at LibreChat's `X-RateLimit-Remaining`; when the budget is used up they wait for the window
+  to end (`X-RateLimit-Reset`) and go on. When LibreChat answers `auth_rate_limited` anyway, they wait for
+  the window and try the login once more. Refused again, the check reports **SKIP** with the reason, and
+  so do the checks that need that login; the limit never makes a check FAIL. A wait shows in the check's
+  line (`waited N s for LibreChat's login limit`) and makes that run up to five minutes longer.
+- **Reset**: LibreChat keeps the count in memory, so restarting it starts a new window:
+  `docker compose restart librechat` (with `-p $RUN` on the VM). The checks wait until it answers again.
+
 ## Notes
 
 - The stack uses the name `dolibarr-mcp-test` for its project and volumes. `TEST_TAG` (default
   `local`) names the three images built here; on a shared Docker host give each run its own
   project name and tag, e.g. `TEST_TAG=dr10 docker compose -p dr10 up -d --build` (see
   `docs/agents/test-vm.md`).
-- LibreChat limits logins per IP: it counts every request under `/oauth/` (start and callback, so two
-  per login, and also the "connected" page after an MCP server's OAuth callback, which the checks do
-  not open) against `LOGIN_MAX` 7 per `LOGIN_WINDOW` 5 minutes. The group `librechat` logs into LibreChat five
-  times; when a login would hit the limit (for example because `checks.py` ran shortly before), it waits
-  for the window to end instead of failing, which makes that run up to five minutes longer.
+- LibreChat's login limit: see [LibreChat's login limit](#librechats-login-limit).
