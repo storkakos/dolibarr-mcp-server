@@ -163,7 +163,12 @@ def _():
         rep["attributes"]["post.logout.redirect.uris"] = "##".join(
             x for x in rep["attributes"]["post.logout.redirect.uris"].split("##") if not x.startswith(other))
         rep["redirectUris"] = [x for x in rep["redirectUris"] if not x.startswith(other)]
-        kc.put(url, json=rep)
+        restored = kc.put(url, json=rep)
+        # A failed clean-up would leave the foreign attribute and other.example.com URIs on the client
+        # (and merge_client keeps them), so it must not pass silently.
+        assert restored.status_code == 204, (
+            f"clean-up PUT of the librechat client failed: {restored.status_code} {restored.text[:200]}; "
+            f"remove test.foreign.attribute and the {other} URIs from the client by hand")
     return "foreign attribute, redirect URI and post-logout redirect URI kept next to the stack's own"
 
 
