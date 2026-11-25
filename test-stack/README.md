@@ -191,10 +191,8 @@ its key, base URL and model into `test-stack/llm.env`, which is git-ignored and 
 
 ```sh
 umask 077
-printf 'LITELLM_KEY=<your key>
-LITELLM_BASE_URL=<endpoint URL>
-LITELLM_MODEL=<model>
-' > llm.env
+printf '%s
+' 'LITELLM_KEY=<your key>' 'LITELLM_BASE_URL=<endpoint URL>' 'LITELLM_MODEL=<model>' > llm.env
 docker compose up -d librechat        # pick up the key
 ```
 
