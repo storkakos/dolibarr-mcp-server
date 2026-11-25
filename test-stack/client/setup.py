@@ -7,6 +7,7 @@ that step succeeded.
 
 Idempotent: a step already done is skipped, so `docker compose up` can run it again.
 """
+import os
 import re
 
 import requests
@@ -42,6 +43,12 @@ def main() -> None:
     r = requests.get(f"{DOLIBARR}/custom/restoauth/.well-known/oauth-authorization-server", timeout=10)
     check("restoauth metadata at the issuer path",
           r.status_code == 200 and r.json().get("issuer") == ISSUER, f"{r.status_code}")
+    if os.environ.get("TEST_PROXY") == "nginx":
+        # The nginx variant: Dolibarr's Apache must not answer discovery itself, so the checks above
+        # prove restoauth's nginx rules and not the Apache ones.
+        r = requests.get("http://dolibarr/.well-known/oauth-authorization-server/custom/restoauth",
+                         headers={"Host": "erp.example.com"}, allow_redirects=False, timeout=10)
+        check("nginx variant: Dolibarr's Apache leaves discovery to nginx", r.status_code == 404, f"{r.status_code}")
 
     r = requests.get(f"{DOLIBARR}/index.php", timeout=10)
     check("Dolibarr login page offers the Keycloak login",

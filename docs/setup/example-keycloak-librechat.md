@@ -42,6 +42,7 @@ production).
 7. [Keycloak: client for LibreChat](#keycloak-client-for-librechat)
 8. [LibreChat](#librechat)
 9. [Check list](#check-list)
+10. [Both MCP servers in one LibreChat](#both-mcp-servers-in-one-librechat)
 
 ## Example hostnames
 
@@ -141,6 +142,9 @@ realm `example`. In the Keycloak admin console (Keycloak 26):
 | | Valid redirect URIs | `https://erp.example.com/core/modules/openid_connect/callback.php` (exactly this, no wildcard) |
 | | Valid post logout redirect URIs | `https://erp.example.com/index.php*` (with the `*`, see the **Logout URL** below) |
 | | Web origins | empty (Dolibarr calls Keycloak from the server, not from the browser) |
+| Logout settings | Front channel logout | **On** |
+| | Front-channel logout URL | `https://erp.example.com/user/logout.php?noredirect=1` (Dolibarr's own logout page) |
+| | Backchannel logout URL | empty (Dolibarr has no endpoint for it) |
 
 Why these values:
 
@@ -157,6 +161,20 @@ Why these values:
   the address Keycloak is asked to return to is `https://erp.example.com/index.php` followed by
   `?client_id=...`. Without the trailing `*`, Keycloak refuses the logout with "Invalid redirect
   uri". The `*` only allows addresses that start with Dolibarr's own `index.php`.
+- **Front-channel logout to Dolibarr.** A Keycloak logout (for example LibreChat's **Log out**, see
+  [Log out of Keycloak too](#env-log-out-of-keycloak-too)) ends only Keycloak's own session unless
+  Keycloak knows how to log the user out of Dolibarr. With this URL, Keycloak's logout page loads
+  Dolibarr's logout page in the browser, and Dolibarr's session ends too. Without it, Dolibarr stays
+  logged in as the previous user: if someone else then logs into LibreChat in the same browser and
+  connects Dolibarr, restoauth's consent page is shown for the previous user's Dolibarr account, and
+  that person's token ends up in the new user's LibreChat. `noredirect=1` keeps Dolibarr from sending
+  the iframe on to Keycloak's logout (the **Logout URL** below). Dolibarr's logout page needs no CSRF
+  token, so a plain page load ends the session.
+- **Side effect.** When Keycloak's logout page loads that URL while Dolibarr's session has already
+  ended, which is always the case after Dolibarr's own **Logout**, Dolibarr shows its login page
+  inside the iframe and remembers the logout page as the page to return to after the next login (for
+  an hour). The next **Use OpenID to login** within that hour then ends on an empty page, logged out
+  again; the login after that works. See check 8.
 
 ### Users in Keycloak
 
@@ -303,13 +321,16 @@ need it in [LibreChat](#librechat).
 | Login settings | Root URL | `https://chat.example.com` |
 | | Home URL | `https://chat.example.com/` |
 | | Valid redirect URIs | `https://chat.example.com/oauth/openid/callback` (exactly this, no wildcard) |
-| | Valid post logout redirect URIs | empty |
+| | Valid post logout redirect URIs | `https://chat.example.com/login` (LibreChat's login page, see [Log out of Keycloak too](#env-log-out-of-keycloak-too)) |
 | | Web origins | empty (LibreChat calls Keycloak from the server, not from the browser) |
 
 The reasons are the same as for the [`dolibarr` client](#keycloak-client-for-dolibarr): authorization
 code flow only, exact redirect URI. **Require PKCE** off means Keycloak accepts a login with or
 without PKCE. LibreChat sends PKCE (`S256`) when `OPENID_USE_PKCE=true`, and the client secret
-protects the code exchange either way.
+protects the code exchange either way. The **post logout redirect URI** is where Keycloak sends the
+browser after LibreChat's logout. Without it, Keycloak answers the logout with "Invalid redirect uri"
+and keeps the session, so the next **Sign in with Keycloak** logs the same person in without a
+password.
 
 LibreChat matches its accounts by **email**, so every LibreChat user needs an email in Keycloak.
 LibreChat accounts give access to chats only, not to Dolibarr data: what the assistant may read is
@@ -358,6 +379,39 @@ OPENID_USE_PKCE=true
   `ALLOW_EMAIL_LOGIN` as it is if you need a local LibreChat admin account.
 - If Keycloak, Dolibarr or the MCP server use certificates from an internal CA, set
   `NODE_EXTRA_CA_CERTS` to the CA file for LibreChat.
+
+### `.env`: log out of Keycloak too
+
+By default, LibreChat's **Log out** only ends the LibreChat session. The Keycloak session stays, and
+the next **Sign in with Keycloak** logs the same person in again without asking for a password: on a
+shared computer the next user gets the previous user's account, and nobody can switch to another
+account. Add these keys so that the logout ends the Keycloak session too:
+
+```sh
+# Log out of Keycloak as well, then come back to LibreChat's login page.
+OPENID_USE_END_SESSION_ENDPOINT=true
+OPENID_POST_LOGOUT_REDIRECT_URI=https://chat.example.com/login
+```
+
+- `OPENID_USE_END_SESSION_ENDPOINT=true` makes LibreChat send the browser to Keycloak's logout
+  endpoint (the realm's `end_session_endpoint`) after its own logout.
+- `OPENID_POST_LOGOUT_REDIRECT_URI` is where Keycloak sends the browser afterwards. It must be listed
+  exactly under **Valid post logout redirect URIs** of the
+  [`librechat` client](#keycloak-client-for-librechat). Without the key, LibreChat sends
+  `DOMAIN_CLIENT` + `/login`, the same URL; the key makes it explicit.
+- When LibreChat still has the user's ID token, Keycloak logs out at once. Otherwise Keycloak first
+  asks "Do you want to log out?"; after **Logout** the browser lands on LibreChat's login page.
+- The logout ends the user's Keycloak session for every application. Dolibarr's own session in the
+  browser ends too, through the **front-channel logout** of the
+  [`dolibarr` client](#keycloak-client-for-dolibarr): Keycloak's logout page loads Dolibarr's logout
+  page in an iframe. The connection to the MCP server stays: it is restoauth's grant for the LibreChat
+  user, not a login, and ends only as described in the user guide.
+- The front-channel logout works only if the browser sends Dolibarr's session cookie inside that
+  iframe. That is the case when Dolibarr and Keycloak are on the same site (like `erp.example.com` and
+  `sso.example.com`). If they are on different domains, browsers that block third-party cookies send
+  no cookie, and Dolibarr stays logged in. It also does not reach a Dolibarr session that was opened
+  with Dolibarr's own login form instead of **Use OpenID to login**. In those cases log out of
+  Dolibarr by hand, or let each person use their own browser profile.
 
 LibreChat sits behind your reverse proxy. The proxy must pass `X-Forwarded-Proto: https` to
 LibreChat. Otherwise LibreChat does not set its session cookie during the Keycloak login, and the
@@ -609,3 +663,114 @@ second user. The assistant then sees what that Dolibarr user may see, and nothin
 |---|---|
 | The model answers without calling a tool | The model does not support tool calls, or the `dolibarr` server is not switched on in this chat. |
 | Another person's name | The browser was still logged into Dolibarr as someone else when consent was given in check 6, and restoauth issued the token for that user. Disconnect **Dolibarr** in LibreChat, log out of Dolibarr, and connect again. Each user should give consent in their own browser session. |
+
+### 8. After a logout, Keycloak asks for a password again
+
+In LibreChat, click your name at the bottom left, then **Log out**. Then click **Sign in with
+Keycloak**.
+
+**Expected:** after the logout the browser lands on LibreChat's login page (possibly after Keycloak's
+"Do you want to log out?" with **Logout**). **Sign in with Keycloak** shows Keycloak's login form
+again, and a second user can log in with their own username and password. Opening
+`https://erp.example.com/` in the same browser shows Dolibarr's login page, and when the second user
+connects **Dolibarr** in LibreChat, restoauth's consent page names *their* account in the **User**
+row.
+
+**If not:**
+
+| Result | Fix |
+|---|---|
+| Keycloak: "Invalid redirect uri" after **Log out** | `OPENID_POST_LOGOUT_REDIRECT_URI` is not listed exactly under **Valid post logout redirect URIs** of the `librechat` client. |
+| **Sign in with Keycloak** logs the previous user in without a form | `OPENID_USE_END_SESSION_ENDPOINT` is not `true` (restart LibreChat after changing `.env`), so LibreChat never sent the browser to Keycloak's logout. |
+| Dolibarr is still logged in as the previous user, and the consent page names the previous user | The `dolibarr` client has no **Front channel logout** with the **Front-channel logout URL** `https://erp.example.com/user/logout.php?noredirect=1`, or Dolibarr and Keycloak are on different sites (see [Log out of Keycloak too](#env-log-out-of-keycloak-too)). Click **Deny**, log out of Dolibarr, then connect again. |
+| After the Keycloak login Dolibarr shows an empty page at `user/logout.php` and is logged out again | The [side effect](#keycloak-client-for-dolibarr) of the front-channel logout after Dolibarr's own **Logout** (or after Dolibarr's session had timed out). Log in again; the second login works. In LibreChat, connect **Dolibarr** again. |
+| LibreChat refuses the login as rate limited (`auth_rate_limited`) | LibreChat allows about 7 logins per 5 minutes per IP. Wait five minutes. |
+
+## Both MCP servers in one LibreChat
+
+To offer Dolibarr and iTop in the same LibreChat, run both MCP servers side by side and add both to
+the same `librechat.yaml`. This section lists only what differs from the single-server setup above.
+The iTop side (iTop's own settings and callback) is in the
+[iTop MCP server's example setup](https://github.com/storkakos/itop-mcp-server/blob/main/docs/setup/example-keycloak-librechat.md).
+
+| Example | What it is |
+|---|---|
+| `https://mcp-erp.example.com/mcp` | Dolibarr MCP server (its `MCP_RESOURCE_URL`) |
+| `https://mcp-itop.example.com/mcp` | iTop MCP server (its `MCP_RESOURCE_URL`) |
+| `https://chat.example.com/api/mcp/dolibarr/oauth/callback` | LibreChat's callback for Dolibarr, on **restoauth's** redirect allowlist |
+| `https://chat.example.com/api/mcp/itop/oauth/callback` | LibreChat's callback for iTop, on **iTop's** redirect allowlist |
+
+- **Each server has its own public hostname (or path) and its own resource URL.** Both MCP servers
+  listen on their own port behind the reverse proxy, and each has its own `MCP_RESOURCE_URL`. The two
+  servers must not share a URL.
+- **Each server has its own OAuth callback**, built from its name in `librechat.yaml`
+  (`/api/mcp/<server name>/oauth/callback`), so the names `dolibarr` and `itop` give two different
+  callbacks. Each goes only on the allowlist of its own system: Dolibarr's in restoauth's **Allowed
+  redirect URIs**, iTop's in `redirect_uris` of altioo-oauth-server. Each system's **Allowed
+  resources** lists only its own MCP server's URL.
+- **`allowedDomains` lists all four hosts:** both MCP servers and both systems (Dolibarr and iTop).
+  A host that is missing fails as described under [`mcpSettings`](#librechatyaml-the-dolibarr-mcp-server).
+- **One Keycloak client for LibreChat.** Both systems use the same Keycloak realm and the same
+  `librechat` client for the login to LibreChat itself. The OAuth flows of the two MCP servers do
+  not involve that client.
+
+`librechat.yaml`:
+
+```yaml
+mcpServers:
+  dolibarr:
+    type: streamable-http
+    url: https://mcp-erp.example.com/mcp
+    title: Dolibarr
+    description: Third parties, invoices, proposals, orders and products from Dolibarr, with your own Dolibarr rights
+    requiresOAuth: true
+  itop:
+    type: streamable-http
+    url: https://mcp-itop.example.com/mcp
+    title: iTop
+    description: Tickets, CIs and contacts from iTop, with your own iTop rights
+    requiresOAuth: true
+
+mcpSettings:
+  allowedDomains:
+    - "https://mcp-erp.example.com"
+    - "https://mcp-itop.example.com"
+    - "https://erp.example.com"
+    - "https://itop.example.com"
+
+modelSpecs:
+  list:
+    - name: itop-dolibarr-assistant
+      label: iTop + Dolibarr assistant
+      description: Answers questions about iTop and Dolibarr with your own rights in each
+      preset:
+        # An endpoint and model you have already set up in LibreChat.
+        endpoint: <your endpoint>
+        model: <your model>
+      mcpServers:
+        - dolibarr
+        - itop
+```
+
+Keep the single-server specs next to it if you want them: a spec with `mcpServers: [dolibarr]` only
+offers Dolibarr. The options for preselecting a model spec work as described above.
+
+**Check:** each user connects both servers once (each shows its own consent page, in the user's own
+Dolibarr or iTop session), then starts a chat with the **iTop + Dolibarr assistant** and asks for
+both `whoami` tools:
+
+> Use the whoami tool of Dolibarr and the whoami tool of iTop: who am I in each?
+
+**Expected:** two tool calls, one named after each server. Dolibarr's result contains `"user"` with
+the Dolibarr user, iTop's result names the iTop person. The names differ if the user has different
+display names in the two systems.
+
+**If not:** a server whose OAuth connection fails shows the symptoms of the single-server
+[check list](#check-list) (check 6) for that server only; the other one keeps working.
+
+Tested in a combined run on the test VM: one Keycloak realm, one LibreChat v0.8.9, Dolibarr 23.0.4
+with restoauth 0.2.2 and iTop 3.2.3 with altioo-oauth-server, both MCP servers behind one TLS proxy
+under the hostnames of the table above. LibreChat loaded exactly this configuration, and an MCP
+client went through the OAuth flow (Keycloak login, consent) of both servers and called both
+`whoami` tools. The chat itself, one model calling both tools, was verified in an earlier combined
+run with a model behind LibreChat.

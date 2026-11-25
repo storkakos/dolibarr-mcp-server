@@ -1,21 +1,49 @@
 """TEST ONLY. Keycloak through its admin REST API: realm `example`, client `dolibarr` for Dolibarr's
-openid_connect login, client `librechat` for the LibreChat login, and the test users.
+openid_connect login (with front-channel logout to Dolibarr's logout page), client `librechat` for the
+LibreChat login, and the test users.
 
 Same values as the admin-console tables in docs/setup/example-keycloak-librechat.md. Differences for
 the local test, each on purpose: the realm itself (the manual assumes it exists); fixed client
-secrets (test values) instead of copying them from the Credentials tab; a post-logout redirect for
-Dolibarr's logout button.
+secrets (test values) instead of copying them from the Credentials tab.
+
+The clients are merged, not replaced: a client that exists already keeps every setting this setup does
+not own (attributes, other redirect and post-logout redirect URIs, web origins), so another stack's
+setup or an admin's change on the same Keycloak survives a second run.
 
 Dolibarr matches the Keycloak user by `preferred_username` (MAIN_AUTHENTICATION_OIDC_LOGIN_CLAIM), so
 users must not change their username and nobody may register themselves.
 """
 from common import CHAT, DOLIBARR, KC_SECRET_DOLIBARR, KC_SECRET_LIBRECHAT, KC_USERS, REALM, SSO, kc_admin, say
 
+# Keycloak keeps the post-logout redirect URIs in one attribute, separated by "##".
+LIST_ATTRIBUTES = {"post.logout.redirect.uris"}
+
 
 def _ok(r):
     if r.status_code >= 400:
         raise SystemExit(f"{r.request.method} {r.url}: {r.status_code} {r.text[:300]}")
     return r
+
+
+def _union(old: list, new: list) -> list:
+    return [*old, *(x for x in new if x not in old)]
+
+
+def merge_client(current: dict, own: dict) -> dict:
+    """The existing client representation with this setup's settings put on top: own scalar fields and
+    attributes win, URI lists are joined, anything else stays as it is."""
+    merged = {**current, **{k: v for k, v in own.items() if k not in ("attributes", "redirectUris", "webOrigins")}}
+    merged["redirectUris"] = _union(current.get("redirectUris") or [], own.get("redirectUris") or [])
+    merged["webOrigins"] = _union(current.get("webOrigins") or [], own.get("webOrigins") or [])
+    attrs = dict(current.get("attributes") or {})
+    for k, v in (own.get("attributes") or {}).items():
+        if k in LIST_ATTRIBUTES:
+            attrs[k] = "##".join(_union([x for x in attrs.get(k, "").split("##") if x],
+                                        [x for x in v.split("##") if x]))
+        else:
+            attrs[k] = v
+    merged["attributes"] = attrs
+    return merged
 
 
 def setup_realm() -> None:
@@ -25,8 +53,10 @@ def setup_realm() -> None:
         _ok(s.post(A, json={"realm": REALM, "enabled": True}))
     R = f"{A}/{REALM}"
 
-    def client(cid, name, root, redirect, post_logout, secret):
+    def client(cid, name, root, redirect, post_logout, secret, frontchannel_logout_url=""):
         body = {
+            # Front-channel logout: on a Keycloak logout the browser loads this URL in an iframe.
+            "frontchannelLogout": bool(frontchannel_logout_url),
             "clientId": cid, "name": name, "protocol": "openid-connect", "enabled": True,
             "publicClient": False, "clientAuthenticatorType": "client-secret", "secret": secret,
             "authorizationServicesEnabled": False, "standardFlowEnabled": True,
@@ -37,9 +67,12 @@ def setup_realm() -> None:
                            "post.logout.redirect.uris": post_logout},
             "rootUrl": root, "baseUrl": root + "/", "redirectUris": [redirect], "webOrigins": [],
         }
+        if frontchannel_logout_url:
+            body["attributes"]["frontchannel.logout.url"] = frontchannel_logout_url
         found = s.get(f"{R}/clients", params={"clientId": cid}).json()
         if found:
-            _ok(s.put(f"{R}/clients/{found[0]['id']}", json=body))
+            current = _ok(s.get(f"{R}/clients/{found[0]['id']}")).json()
+            _ok(s.put(f"{R}/clients/{found[0]['id']}", json=merge_client(current, body)))
         else:
             _ok(s.post(f"{R}/clients", json=body))
         say("   keycloak client", cid)
@@ -47,10 +80,16 @@ def setup_realm() -> None:
     # Dolibarr 23's openid_connect callback (core/lib/openid_connect.lib.php) and its login page after logout.
     # The post-logout URI ends in a wildcard: Dolibarr 23 appends "?client_id=..&returnTo=.." to the
     # configured logout URL, so the post_logout_redirect_uri Keycloak receives is index.php plus that text.
+    # Front-channel logout to Dolibarr's logout page: a Keycloak logout (e.g. LibreChat's Log out) ends the
+    # Dolibarr session in the browser too, so the next user does not consent as the previous one.
+    # user/logout.php needs no CSRF token; noredirect=1 keeps it from sending the iframe on to Keycloak's
+    # logout (MAIN_AUTHENTICATION_OIDC_LOGOUT_URL).
     client("dolibarr", "Dolibarr", DOLIBARR, f"{DOLIBARR}/core/modules/openid_connect/callback.php",
-           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR)
-    # LibreChat's OpenID login callback (OPENID_CALLBACK_URL in librechat/librechat.env).
-    client("librechat", "LibreChat", CHAT, f"{CHAT}/oauth/openid/callback", "", KC_SECRET_LIBRECHAT)
+           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR, f"{DOLIBARR}/user/logout.php?noredirect=1")
+    # LibreChat's OpenID login callback (OPENID_CALLBACK_URL in librechat/librechat.env) and its login page
+    # after logout (OPENID_POST_LOGOUT_REDIRECT_URI). Without the latter, Keycloak answers LibreChat's
+    # logout with "Invalid redirect uri" and keeps the session.
+    client("librechat", "LibreChat", CHAT, f"{CHAT}/oauth/openid/callback", f"{CHAT}/login", KC_SECRET_LIBRECHAT)
 
     realm = _ok(s.get(R)).json()
     realm.update({"registrationAllowed": False, "editUsernameAllowed": False})

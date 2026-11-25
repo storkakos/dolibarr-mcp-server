@@ -15,6 +15,10 @@
  *   TEST_ACCESS_TOKEN_LIFETIME restoauth's access token lifetime in seconds (short, for the expiry check)
  *   TEST_ANNA_API_KEY          anna's own Dolibarr API key (DOLAPIKEY), for the check that the MCP server
  *                              accepts only restoauth tokens
+ *   TEST_EXTRA_DATA            optional, default 0: number of extra customers (each with an invoice, proposal
+ *                              and order) and extra products, so the checks can be run against more data than
+ *                              the sample data; extra customer 1, 4, ... goes to anna, 2, 5, ... to carl, the
+ *                              rest to nobody
  *
  * Every password and secret in the test stack is a test value.
  */
@@ -39,6 +43,7 @@ $oidcClientId = env_required('TEST_OIDC_CLIENT_ID');
 $oidcClientSecret = env_required('TEST_OIDC_CLIENT_SECRET');
 $accessTokenLifetime = env_required('TEST_ACCESS_TOKEN_LIFETIME');
 $annaApiKey = env_required('TEST_ANNA_API_KEY');
+$extraData = (int) getenv('TEST_EXTRA_DATA');
 
 // Test users. The Dolibarr login equals the Keycloak preferred_username: Dolibarr 23 does not create
 // users on the first openid_connect login. No Dolibarr password: they log in through Keycloak only.
@@ -65,6 +70,20 @@ $testUsers = array(
 	'dave' => array('firstname' => 'Dave', 'lastname' => 'Leaver', 'email' => 'dave@example.com',
 		'rights' => array(array('restoauth', 'connect'), array('societe', 'lire')), 'sales_rep_of' => array()),
 );
+$sampleProducts = array(
+	'SRV-MAINT' => array('Maintenance (hour)', 1, 100),  // label, type (Product::TYPE_SERVICE = 1, TYPE_PRODUCT = 0), price
+	'HW-ROUTER' => array('Router', 0, 250),
+);
+$sampleCustomers = array('North Customer Ltd' => 'Hamburg', 'South Customer Inc' => 'Munich');
+for ($i = 1; $i <= $extraData; $i++) {
+	$sampleProducts["EXTRA-P$i"] = array("Extra product $i", 0, 10 * $i);
+	$sampleCustomers["Extra Customer $i"] = 'Berlin';
+	if ($i % 3 == 1) {
+		$testUsers['anna']['sales_rep_of'][] = "Extra Customer $i";
+	} elseif ($i % 3 == 2) {
+		$testUsers['carl']['sales_rep_of'][] = "Extra Customer $i";
+	}
+}
 
 define('NOSESSION', '1');
 define('NOREQUIREMENU', '1');
@@ -151,7 +170,8 @@ foreach ($consts as $name => $v) {
 }
 $conf->setValues($db);
 
-// 3. Sample data: products, two customers, and per customer one invoice, proposal and order (validated).
+// 3. Sample data: products, two customers (plus TEST_EXTRA_DATA extra ones), and per customer one invoice,
+// proposal and order (validated).
 require_once DOL_DOCUMENT_ROOT.'/product/class/product.class.php';
 require_once DOL_DOCUMENT_ROOT.'/societe/class/societe.class.php';
 require_once DOL_DOCUMENT_ROOT.'/compta/facture/class/facture.class.php';
@@ -159,10 +179,7 @@ require_once DOL_DOCUMENT_ROOT.'/comm/propal/class/propal.class.php';
 require_once DOL_DOCUMENT_ROOT.'/commande/class/commande.class.php';
 
 $products = array();
-foreach (array(
-	'SRV-MAINT' => array('Maintenance (hour)', Product::TYPE_SERVICE, 100),
-	'HW-ROUTER' => array('Router', Product::TYPE_PRODUCT, 250),
-) as $ref => $p) {
+foreach ($sampleProducts as $ref => $p) {
 	$prod = new Product($db);
 	if ($prod->fetch(0, $ref) <= 0) {
 		$prod->ref = $ref;
@@ -182,7 +199,7 @@ foreach (array(
 }
 
 $customers = array();
-foreach (array('North Customer Ltd' => 'Hamburg', 'South Customer Inc' => 'Munich') as $name => $town) {
+foreach ($sampleCustomers as $name => $town) {
 	$soc = new Societe($db);
 	if ($soc->fetch(0, $name) > 0) {
 		$customers[$name] = $soc;

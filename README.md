@@ -155,8 +155,10 @@ refused rather than normalised: in `MCP_RESOURCE_URL` they stop startup with a m
 setting, in an incoming `Host` header they get `421` and in an `Origin` header `403`. The advertised
 URL stays exactly as written in `MCP_RESOURCE_URL`.
 
-nginx:
+nginx (tested: the test stack's [nginx variant](test-stack/README.md#nginx-variant) builds its
+configuration from this block and the one under [path prefix](#resource-url-with-a-path-prefix)):
 
+<!-- test-stack nginx block: mcp-server. The test stack's nginx variant (test-stack/nginx/build-conf.sh) builds its configuration from the next code block. Keep this line directly above it. -->
 ```nginx
 server {
     listen 443 ssl;
@@ -204,6 +206,7 @@ If the server shares a host with other services and lives under a path, e.g.
 
 nginx, inside the `server` block of `apps.example.com`:
 
+<!-- test-stack nginx block: mcp-prefix. The test stack's nginx variant (test-stack/nginx/build-conf.sh) builds its configuration from the next code block. Keep this line directly above it. -->
 ```nginx
 location = /dolibarr/mcp {
     proxy_pass http://127.0.0.1:8131/mcp;
@@ -441,7 +444,9 @@ bash scripts/test-on-vm.sh
 bash scripts/test-on-vm.sh tests/test_config.py -x
 ```
 
-See [docs/agents/test-vm.md](docs/agents/test-vm.md) for the VM, run names and cleanup.
+See [docs/agents/test-vm.md](docs/agents/test-vm.md) for the VM, run names and cleanup. When
+several agents work at once, only the `vm-runner` session runs this; ticket agents queue a request
+instead (see [Only `vm-runner` uses the VM](docs/agents/test-vm.md#only-vm-runner-uses-the-vm)).
 
 On a Linux machine, run them directly:
 
@@ -467,4 +472,6 @@ this server) in the [test stack](test-stack/README.md).
 
 Releasing: set `__version__` in `src/dolibarr_mcp_server/__init__.py` and the image tag in
 `compose.yaml` to the same version (a test checks this), run pytest, the smoke test and the test
-stack's end-to-end checks on the test VM, then tag `vX.Y.Z`.
+stack's end-to-end checks on the test VM, both with Caddy and with the
+[nginx variant](test-stack/README.md#nginx-variant) (mandatory: it tests the nginx blocks of this
+README and of restoauth's README), then tag `vX.Y.Z`.

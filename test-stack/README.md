@@ -8,7 +8,7 @@ together on one Docker host, configured without manual clicks, so the whole chai
 against real software. It reproduces the validation run of
 [Example setup: Keycloak and LibreChat](../docs/setup/example-keycloak-librechat.md).
 
-It starts a TLS proxy (Caddy) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
+It starts a TLS proxy (Caddy, or nginx in the [nginx variant](#nginx-variant)) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
 `mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.2.2, Keycloak 26.8.2, MongoDB,
 LibreChat v0.8.9 and the MCP server built from this repo. Inside the stack's network the hostnames
 point to the proxy, so no hosts file is needed.
@@ -31,12 +31,12 @@ docker compose logs -f setup      # wait for "setup complete" (a few minutes on 
 
 `setup` ends with checks through the proxy and stops with `setup check failed: ...` if one fails.
 `docker compose ps` shows `dolibarr` as `healthy` once Dolibarr is configured. LibreChat starts after
-`setup` completed.
+`setup` completed; the LibreChat checks wait until it answers (see [Check groups](#check-groups)).
 
 ## End-to-end checks
 
 ```sh
-docker compose run --rm client    # waits for "setup complete", then runs client/checks.py
+docker compose run --rm client    # waits for "setup complete", then runs client/checks.py (all groups, see Check groups)
 ```
 
 `checks.py` acts as an MCP client and as the users' browsers, through the proxy, and prints one
@@ -44,19 +44,145 @@ line per check (`PASS`, `FAIL` or `SKIP`); it exits with 1 if a check failed.
 `docker compose run --rm client python checks.py -v` adds the traceback of a failed check. It takes
 about two and a half minutes, mostly waiting for the MCP server's rights cache (30 s) after a
 revocation; the expiry check's wait for the short access token lifetime (60 s) overlaps with those.
+On the test VM, `scripts/stack-on-vm.sh` does a whole run (Caddy or `--nginx`) with its own
+project name and image tags, from start to clean-up (see `docs/agents/test-vm.md`).
 
 | Part | Checks |
 |---|---|
 | OAuth flow | discovery (401 challenge, protected resource metadata, authorization server metadata at the server root); dynamic registration; authorize, Dolibarr login through Keycloak, consent page with the user's rights; token with PKCE, code used only once; the token works at the MCP server and the Dolibarr REST API; refresh with rotation (old access token dead); refresh token reuse revokes the whole connection; revoke (RFC 7009) |
 | Negative cases | redirect URI not on the allowlist (registration) or not registered (authorize); authorize without PKCE or with `plain`; resource not allowed (RFC 8707); wrong or missing PKCE verifier; a user without the connect right (`bob`) sees no Allow button and gets `access_denied` |
-| How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one. Each refusal is checked to happen before the token would have expired by itself |
-| Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 7) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. The two chat checks are skipped without an [LLM key](#llm-key). |
+| How a connection ends | the user is disabled (by `admin` on the user card): both of `dave`'s connections disappear from his **Connected applications** tab at once, his access token gets 401 at Dolibarr and his refresh token `invalid_grant`; enabling him again revives neither connection, also not the one that was not used while he was disabled; the MCP server refuses the token after its rights cache; afterwards `dave` can connect anew. `anna` ends a connection on her own user card: it disappears from the list, its tokens are refused as above. An access token past its lifetime (60 s in the stack) is refused at Dolibarr and the MCP server, and refresh gives a working one; with a lifetime longer than `EXPIRY_MAX_WAIT` (300 s) this check is reported as `SKIP` with the reason. Each refusal is checked to happen before the token would have expired by itself |
+| Example setup: LibreChat | (the [example setup's check list](../docs/setup/example-keycloak-librechat.md#check-list), checks 5 to 8) `anna` logs into LibreChat through Keycloak (with PKCE); connecting the `dolibarr` server leads through Dolibarr's login (Keycloak session reused, no password asked) to restoauth's consent page naming LibreChat MCP Client and `anna`, and after Allow LibreChat shows the server as connected; the Dolibarr assistant is the default model spec with the `dolibarr` server; in a chat, the model calls `whoami` and the result names `anna`; the same for `carl`. Running the Keycloak setup again keeps an attribute, a redirect URI and a post-logout redirect URI that another setup put on the `librechat` client. `carl` logs out of LibreChat: LibreChat sends the browser to Keycloak's logout, Keycloak ends the session and sends it back to LibreChat's login page; **Sign in with Keycloak** then shows Keycloak's login form again and `bob` logs in. User switch in one browser: `anna` connects Dolibarr and logs out; Keycloak's front-channel logout ends her Dolibarr session, so when `carl` logs in and connects in the same browser, the consent page names `carl` and the new connection is his (`client/user_switch.py`). Five LibreChat logins in all; a login that would hit LibreChat's login limit waits for its window. The two chat checks are skipped without an [LLM key](#llm-key). |
+| Reverse proxy | restoauth's metadata at the server root and in the issuer path, as `oauth-authorization-server` and `openid-configuration` (the discovery rules); in the [nginx variant](#nginx-variant) only: the MCP server under a path prefix answers its `401` challenge with the prefixed metadata URL, the metadata names the prefixed resource, and `anna` connects for that resource and calls `whoami` through the prefix (behind Caddy these two are `SKIP`) |
 | Rights | `anna` and `carl` connected: whoami names each; the tool list differs (`carl` has no invoice, proposal or order tools); each reads only their own customer; refused tool calls, `api_get` and `list_api_endpoints` follow the rights, including the stricter rule for outstanding invoices; Dolibarr itself answers `carl`'s `/invoices` with 403; `anna`'s own Dolibarr API key reads her third parties at Dolibarr's REST API (`DOLAPIKEY`), `restoauth/me` answers for it with `"token": null`, and the MCP server refuses it with `401` and the resource metadata challenge |
 
 The checks register a new client on every run and leave it and the revoked connections behind;
 they do not depend on what an earlier run left. The OAuth flow checks use LibreChat's callback
 (`chat.example.com`, on the allowlist) as their redirect URI: they stop at that redirect and read the
 code from it, as a client would. In the LibreChat checks, LibreChat itself receives it.
+
+## Check groups
+
+The checks are split into groups, one file per group in `client/groups/`. The file name is the
+group name. Groups run in a fixed order, whatever order you name them in:
+
+| Group | File | Checks (part of the table above) | Builds on | Needs |
+|---|---|---|---|---|
+| `oauth` | `client/groups/oauth.py` | OAuth flow and its negative cases | | setup only |
+| `rights` | `client/groups/rights.py` | Rights, and `bob` without the connect right | `oauth` | setup only |
+| `ends` | `client/groups/ends.py` | How a connection ends | `oauth` | setup only |
+| `librechat` | `client/groups/librechat.py` | Example setup: LibreChat | | `librechat` (and Mongo) |
+| `proxy` | `client/groups/proxy.py` | Reverse proxy (path prefix: nginx variant only, otherwise SKIP) | `oauth` | setup only |
+
+"Setup only" means the one-shot `setup` service and what it depends on: proxy, MariaDB, Dolibarr,
+Keycloak and the MCP server. LibreChat and Mongo are not needed and need not run. "Builds on": the
+group uses what that group set up (the registered client, `anna`'s connection; see `state` in
+`client/checklib.py`), so naming `rights` alone runs `oauth` first ("also running oauth").
+
+```sh
+docker compose run --rm client python checks.py                     # all groups
+docker compose run --rm client python checks.py oauth rights        # only these (also: oauth,rights)
+docker compose run --rm client python checks.py --list              # groups and their checks
+```
+
+Only groups without LibreChat, on a stack that starts neither LibreChat nor Mongo (clearly less
+RAM): start the `setup` service alone (compose starts its dependencies) and wait until it is done.
+The `client` service does not start LibreChat by itself:
+
+```sh
+docker compose up -d --build setup && docker compose wait setup     # exit code 0: setup complete
+docker compose run --rm client python checks.py oauth rights ends proxy
+```
+
+`python checks.py --services <groups>` prints the services to start for those groups (`setup`, plus
+`librechat` for the group `librechat`); `scripts/stack-on-vm.sh --groups` uses it. Before the first
+check of the group `librechat`, the checks wait until LibreChat answers (`/health`, and `/api/config`
+offers the Keycloak login; neither counts against LibreChat's login limit), up to
+`LIBRECHAT_READY_TIMEOUT` seconds (default 300). If it does not, every check of the group fails with
+"not run: LibreChat at … not ready within … s".
+
+### Add a check
+
+Add it to the group's file, under the other checks of that group:
+
+```python
+@check("rights: what the manual promises, in a few words")
+def _():
+    ...                       # assert what must hold; an exception makes the check FAIL
+    return "detail"           # optional: shown after PASS; return "SKIP <reason>" to skip
+```
+
+Checks run in the order of the file. A check may use what an earlier check of the same group left
+behind, and the `state` of a group its group builds on (`needs`), never what another group did:
+each group must also run alone (with the groups it builds on).
+
+### Add a group
+
+A new file `client/groups/<name>.py` (lowercase letters, digits, `_`), no other file changes:
+
+```python
+from checklib import Group, state
+
+group = Group(__name__, "Heading printed before the checks (the manual it checks)", order=60,
+              services=(),     # compose services needed besides the setup, e.g. ("librechat",)
+              ready=None,      # optional: called before the first check, to wait for those services
+              needs=())        # optional: groups whose state it uses, e.g. ("oauth",)
+check = group.check
+```
+
+`order` places the group among the others (10, 20, 30, 40, 50 are taken). Mention the group in the
+table above.
+
+## nginx variant
+
+On demand, and **mandatory before a release**: nginx replaces Caddy as the TLS proxy, with the same
+hostnames and certificates, and everything else stays the same. Add `compose.nginx.yaml` to every
+command:
+
+```sh
+./make-certs.sh                   # the certificate must include apps.example.com (see below)
+docker compose -f compose.yaml -f compose.nginx.yaml up -d --build
+docker compose -f compose.yaml -f compose.nginx.yaml logs -f setup proxy   # "setup complete"
+docker compose -f compose.yaml -f compose.nginx.yaml run --rm client
+docker compose -f compose.yaml -f compose.nginx.yaml down -v
+```
+
+Without `compose.nginx.yaml` the stack runs with Caddy as before. Do not switch a running stack
+between the two; take it down with `down -v` first.
+
+**The documentation is the configuration.** At start-up the proxy (`nginx/build-conf.sh`) extracts
+the nginx code blocks of the READMEs and assembles its configuration from them, and prints it to its
+log:
+
+| Block | Taken from | Found by | Used for |
+|---|---|---|---|
+| server block for the MCP server | [`../README.md`](../README.md#reverse-proxy-tls), "Reverse proxy (TLS)" | marker `<!-- test-stack nginx block: mcp-server ... -->` directly above it | `mcp.example.com`, as written |
+| path prefix | [`../README.md`](../README.md#resource-url-with-a-path-prefix), "Resource URL with a path prefix" | marker `<!-- test-stack nginx block: mcp-prefix ... -->` directly above it | inside the server block for `apps.example.com`, in front of a second MCP server `mcp-prefix` with `MCP_RESOURCE_URL=https://apps.example.com/dolibarr/mcp` |
+| discovery rules | restoauth's `README.md`, "Rewrite rules for discovery", the copy that comes with the installed module (`htdocs/custom/restoauth/README.md`) | marker `<!-- test-stack nginx block: restoauth-discovery. ... -->` directly above it; a README without the marker (a restoauth release from before it) falls back to the text `/custom/restoauth/metadata.php`, and the log says `restoauth discovery block: found by marker` or `found by text (fallback ...)` | inside the server block for `erp.example.com`, in front of Dolibarr's Apache |
+
+The stack fills in only what the documentation leaves to the reader: the certificate paths
+(`ssl_certificate`, `ssl_certificate_key`), the upstream (`127.0.0.1:8131` becomes the MCP container)
+and the server blocks around the location snippets, plus plain proxy blocks for `sso` and `chat`.
+A block that is missing or found twice stops the proxy with `[nginx-variant] ...` naming the marker
+or text it looked for, a block nginx refuses stops it at `nginx -t`, and a block that loads but does
+not work fails the setup or the check list. The text around and inside this repo's two blocks can be
+reworded freely; keep each marker line directly above its ```` ```nginx ```` block. pytest
+(`tests/test_test_stack_scripts.py`) runs `nginx/build-conf.sh --extract-only` on the README, so a lost
+marker shows up there before any stack runs.
+
+What else differs from the Caddy stack:
+
+- `TEST_PROXY=nginx` switches off the Apache discovery rules in `dolibarr/dolibarr.conf`, so the
+  discovery URLs are answered by restoauth's nginx rules only; `setup` checks that Dolibarr's Apache
+  answers them with 404 itself.
+- restoauth's allowed resources contain both `https://mcp.example.com/mcp` and
+  `https://apps.example.com/dolibarr/mcp`.
+- The proxy starts once Dolibarr (restoauth installed), both MCP servers and Keycloak are up.
+- `make-certs.sh` puts `apps.example.com` into the certificate. If an existing `certs/site.crt` lacks
+  it (or any other hostname of the stack), `make-certs.sh` issues it again with the existing test CA.
+
+nginx is pinned in `compose.nginx.yaml` (`nginx:1.30.5`, a stable release). The run and the check
+list take as long as with Caddy.
 
 ## LLM key
 
@@ -69,8 +195,13 @@ echo 'OPENROUTER_KEY=<your key>' > llm.env
 docker compose up -d librechat        # pick up the key
 ```
 
+To use a key file somewhere else, set `LLM_ENV_FILE` to its path when you start the stack and
+run the checks; compose reads it in place. On the test VM, `scripts/stack-on-vm.sh` does this with
+the shared key `/root/shared/llm.env` (see [test-vm.md](../docs/agents/test-vm.md#llm-key)).
+
 For another provider, change the endpoint in `librechat/librechat.yaml` and the key name in
-`llm.env`. Without `llm.env`, `checks.py` skips the two chat checks and says so.
+`llm.env`. Without a key file, `checks.py` reports the two chat checks as SKIP ("no shared LLM
+key"), and SKIPs do not fail the run.
 
 ## Screenshots
 
@@ -122,7 +253,9 @@ docker compose down -v            # removes the containers and all volumes (data
 docker compose up -d --build      # then start again from a clean state
 ```
 
-`certs/` stays; delete it and run `./make-certs.sh` for new certificates. To also remove the images
+`certs/` stays; delete it and run `./make-certs.sh` for new certificates. `make-certs.sh` also issues
+`site.crt` again by itself when it lacks a hostname of the stack or expires within a day (with a new
+test CA if `certs/ca.key` is gone). To also remove the images
 built here: `docker rmi dolibarr-mcp-test-dolibarr:local dolibarr-mcp-server:test-stack-local
 dolibarr-mcp-test-client:local`.
 
@@ -130,15 +263,17 @@ dolibarr-mcp-test-client:local`.
 
 | Step | Done by |
 |---|---|
-| restoauth release ZIP `module_restoauth-<version>.zip`: the asset of the GitHub release `v<version>` if there is one, otherwise built from the tag with restoauth's `scripts/build-release-zip.sh`; the build stops if the ZIP has no module descriptor for that version | `dolibarr/Dockerfile` |
+| restoauth release ZIP `module_restoauth-<version>.zip`: the asset of the GitHub release `v<version>` if there is one, otherwise built from the tag with restoauth's `scripts/build-release-zip.sh`; or a [local ZIP or checkout](#restoauth-from-a-local-zip-or-checkout); the build stops if the ZIP has no module descriptor for that version | `dolibarr/Dockerfile` |
 | Dolibarr 23.0.4 from the official image; the image installs the database and the admin user | `compose.yaml` (`DOLI_*`) |
 | Apache vhost: reverse-proxy settings and the discovery rewrite rule, exactly as in the restoauth README | `dolibarr/dolibarr.conf` |
 | Trust the test CA, install restoauth from the ZIP into `htdocs/custom/restoauth` (the way Dolibarr's module upload does), on every start | `dolibarr/50-test-stack.sh` |
 | Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, short access token lifetime, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
-| Keycloak realm `example`, clients `dolibarr` and `librechat`, test users; no self-registration, usernames cannot be changed | `client/keycloak_realm.py` (the example setup's values) |
-| LibreChat `.env` and `librechat.yaml`: Keycloak login, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
+| Keycloak realm `example`, clients `dolibarr` (with front-channel logout to Dolibarr's logout page) and `librechat` (with the post-logout redirect URIs), test users; no self-registration, usernames cannot be changed. An existing client is merged, not replaced: settings the setup does not own stay | `client/keycloak_realm.py` (the example setup's values) |
+| LibreChat `.env` and `librechat.yaml`: Keycloak login and logout, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
+| nginx variant: nginx as TLS proxy, its configuration assembled from the READMEs' nginx blocks; a second MCP server under a path prefix (see [nginx variant](#nginx-variant)) | `compose.nginx.yaml`, `nginx/build-conf.sh` |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
-| End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
+| End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)), one file per check group (see [Check groups](#check-groups)) | `client/groups/*.py`, run by `client/checks.py`; `client/checklib.py`, `client/flows.py` |
+| User switch in one browser: `anna` connects Dolibarr and logs out of LibreChat, `carl` logs in and connects; `carl` must consent and get a token as `carl`. Runs as a check of the group `librechat`; `python user_switch.py` prints each step | `client/user_switch.py` |
 
 Differences from the example setup, all for a local test: the Keycloak realm is created (the manual
 assumes it exists); the client secrets are fixed test values instead of being copied from the
@@ -146,7 +281,32 @@ Credentials tab; Dolibarr is configured by `dolibarr/configure.php` instead of t
 
 The restoauth version is pinned in one place, `RESTOAUTH_VERSION` in `dolibarr/Dockerfile`. To try
 another tag: `docker compose build --build-arg RESTOAUTH_VERSION=X.Y.Z dolibarr`, then
-`docker compose up -d`; the start step replaces the module folder when the version changed.
+`docker compose up -d`; the start step replaces the module folder when the ZIP changed.
+
+### restoauth from a local ZIP or checkout
+
+To test a restoauth change that has no release yet, point `RESTOAUTH_LOCAL` at a folder on the
+Docker host before the build. Without it, the stack takes the pinned release as above.
+
+| `RESTOAUTH_LOCAL` is | The build |
+|---|---|
+| a folder with `module_restoauth-<version>.zip` in it, e.g. restoauth's `dist/` after `bash scripts/build-release-zip.sh vX.Y.Z` | takes that ZIP as it is |
+| a restoauth git checkout (with its `.git` folder) | builds the ZIP from the checkout with `git archive`, like `build-release-zip.sh`: tracked files with their uncommitted changes, without untracked files and without the files marked `export-ignore` |
+
+`<version>` is `RESTOAUTH_VERSION`, so for a module version other than the pinned one also pass
+`--build-arg RESTOAUTH_VERSION=X.Y.Z`. The build stops with a message naming the version it found if
+the module descriptor `core/modules/modRestOAuth.class.php` in the ZIP carries another version, and
+if the folder has neither the ZIP nor a checkout. A relative path is taken from `test-stack/`.
+
+```sh
+RESTOAUTH_LOCAL=/path/to/dolibarr-restoauth docker compose build dolibarr     # or .../dist
+RESTOAUTH_LOCAL=/path/to/dolibarr-restoauth docker compose up -d
+```
+
+Set it for `up` too, or `up --build` falls back to the release. The build log names the source
+(`restoauth: local ZIP ...`, `restoauth: building ... from the local checkout at <commit>`). The
+start step installs the new ZIP when its content changed, also at the same version. On the test VM
+the folder must be on the VM: copy the ZIP there, e.g. into your own run folder.
 
 Dolibarr's configuration runs inside the Dolibarr container, not in the Python client, because it
 needs Dolibarr's own PHP functions (`activateModule`, `dolibarr_set_const`, `User::addrights`, the
@@ -175,11 +335,20 @@ Inc.
 Sample data: products `SRV-MAINT` (service) and `HW-ROUTER` (product); customers North Customer Ltd
 (Hamburg) and South Customer Inc (Munich), each with one validated invoice, proposal and order.
 
+The checks find customers by name and do not count products or documents, so they also pass on a
+Dolibarr with more data: `TEST_EXTRA_DATA=6` (on `up`) adds that many extra customers, each with an
+invoice, proposal and order, and as many extra products; extra customers 1, 4, ... belong to `anna`,
+2, 5, ... to `carl`, the rest to nobody. The rights checks still prove that `anna` and `carl` see none of
+each other's customers and only documents of their own.
+
 restoauth settings: allowed resource `https://mcp.example.com/mcp`; redirect allowlist
 `https://chat.example.com/api/mcp/dolibarr/oauth/callback`; loopback redirects off; issuer empty
 (the module URL `https://erp.example.com/custom/restoauth`); access token lifetime 60 s
 (`TEST_ACCESS_TOKEN_LIFETIME`, restoauth's minimum; the default is 3600 s) for the expiry check.
-Change them in `compose.yaml` (`TEST_*` of the `dolibarr` service).
+Change them in `compose.yaml` (`TEST_*` of the `dolibarr` service). `TEST_ACCESS_TOKEN_LIFETIME` and
+`TEST_EXTRA_DATA` can also be set in the environment of `docker compose up`, e.g.
+`TEST_ACCESS_TOKEN_LIFETIME=3600 docker compose up -d`; the expiry check then reports `SKIP`, because it
+waits at most `EXPIRY_MAX_WAIT` seconds (300, set it on `docker compose run` for a longer wait).
 
 ## Reach the services with IP and port (optional)
 
@@ -247,5 +416,8 @@ example the iTop test stack), stop that one first; the hostnames cannot be sent 
   `local`) names the three images built here; on a shared Docker host give each run its own
   project name and tag, e.g. `TEST_TAG=dr10 docker compose -p dr10 up -d --build` (see
   `docs/agents/test-vm.md`).
-- LibreChat limits logins per IP (about 7 in 5 minutes). Running `checks.py` several times in a row
-  can end with `auth_rate_limited`; wait five minutes.
+- LibreChat limits logins per IP: it counts every request under `/oauth/` (start and callback, so two
+  per login, and also the "connected" page after an MCP server's OAuth callback, which the checks do
+  not open) against `LOGIN_MAX` 7 per `LOGIN_WINDOW` 5 minutes. The group `librechat` logs into LibreChat five
+  times; when a login would hit the limit (for example because `checks.py` ran shortly before), it waits
+  for the window to end instead of failing, which makes that run up to five minutes longer.
