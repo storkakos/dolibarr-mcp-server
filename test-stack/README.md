@@ -196,6 +196,7 @@ dolibarr-mcp-test-client:local`.
 | nginx variant: nginx as TLS proxy, its configuration assembled from the READMEs' nginx blocks; a second MCP server under a path prefix (see [nginx variant](#nginx-variant)) | `compose.nginx.yaml`, `nginx/build-conf.sh` |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
 | End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)) | `client/checks.py`, `client/flows.py` |
+| User switch in one browser: `anna` connects Dolibarr and logs out of LibreChat, `carl` logs in and connects; `carl` must consent and get a token as `carl`. Runs as a check of `checks.py`; `python user_switch.py` prints each step | `client/user_switch.py` |
 
 Differences from the example setup, all for a local test: the Keycloak realm is created (the manual
 assumes it exists); the client secrets are fixed test values instead of being copied from the
@@ -340,6 +341,6 @@ example the iTop test stack), stop that one first; the hostnames cannot be sent 
   `docs/agents/test-vm.md`).
 - LibreChat limits logins per IP: it counts every request under `/oauth/` (start and callback, so two
   per login, and also the "connected" page after an MCP server's OAuth callback, which the checks do
-  not open) against `LOGIN_MAX` 7 per `LOGIN_WINDOW` 5 minutes. `checks.py` logs into LibreChat three
+  not open) against `LOGIN_MAX` 7 per `LOGIN_WINDOW` 5 minutes. `checks.py` logs into LibreChat five
   times; when a login would hit the limit (for example because `checks.py` ran shortly before), it waits
   for the window to end instead of failing, which makes that run up to five minutes longer.

@@ -10,8 +10,10 @@ Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat 
 Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
 chat checks need an LLM key in llm.env and are skipped without it); the Keycloak setup run again keeps
 client settings it does not own; after a LibreChat logout Keycloak asks for a password and another user
-logs in. Three LibreChat logins in all; LibreChat counts two requests per login against its limit of seven
-per five minutes, and a login that would hit the limit waits for the window instead of failing.
+logs in; after a LibreChat logout the Dolibarr session in the browser has ended too, so the next user
+consents as themselves (client/user_switch.py). Five LibreChat logins in all; LibreChat counts two
+requests per login against its limit of seven per five minutes, and a login that would hit the limit
+waits for the window instead of failing.
 Last the reverse proxy: restoauth's discovery URLs, and in the nginx variant (compose.nginx.yaml) the MCP
 server under a path prefix (skipped behind Caddy).
 Reports each check as PASS, FAIL or SKIP; exit code 1 if any check failed.
@@ -612,6 +614,12 @@ def _():
             + (" (Keycloak asked to confirm the logout)" if out["confirmed"] else "")
             + f", LibreChat login requests left {switch.login_budget}"
             + (f", waited {switch.waited} s for LibreChat's login limit" if switch.waited else ""))
+
+
+@check("example 8: after a LibreChat logout the next user consents in Dolibarr as themselves")
+def _():
+    import user_switch  # the scenario lives in its own file (combined-stack-findings 06)
+    return user_switch.verdict(user_switch.run())
 
 
 print(f"== Reverse proxy ({PROXY}): restoauth discovery, the MCP server under a path prefix")

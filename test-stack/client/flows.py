@@ -326,8 +326,9 @@ class LibreChat:
     def logout(self) -> dict:
         """The Log out menu item: LibreChat ends its session and sends the browser to Keycloak's end-session
         endpoint (OPENID_USE_END_SESSION_ENDPOINT), which ends the Keycloak session and redirects to
-        OPENID_POST_LOGOUT_REDIRECT_URI. Returns the end-session URL, whether Keycloak asked "Do you want
-        to log out?" and where the browser landed."""
+        OPENID_POST_LOGOUT_REDIRECT_URI. Keycloak's front-channel logout iframes are loaded like a browser does.
+        Returns the end-session URL, whether Keycloak asked "Do you want to log out?", where the browser
+        landed and the front-channel logout URLs it loaded."""
         r = self.b.post(f"{CHAT}/api/auth/logout", headers=self.h)
         assert r.status_code == 200, f"LibreChat logout {r.status_code} {r.text[:200]}"
         redirect = r.json().get("redirect")
@@ -337,8 +338,19 @@ class LibreChat:
         confirm = BeautifulSoup(r.text, "lxml").find("input", attrs={"name": "confirmLogout"})
         if confirm is not None:  # no id_token_hint: Keycloak asks "Do you want to log out?"
             r = _post_form(self.b, r, confirm.find_parent("form"), {"confirmLogout": "Logout"})
+        # Front-channel logout: Keycloak shows a page that loads each client's logout URL in an iframe (for
+        # Dolibarr: user/logout.php?noredirect=1, with Dolibarr's session cookie), then continues to the
+        # post-logout redirect URI.
+        soup = BeautifulSoup(r.text, "lxml")
+        frames = [urljoin(r.url, f["src"]) for f in soup.find_all("iframe") if f.get("src")]
+        for src in frames:
+            follow(self.b, self.b.get(src, allow_redirects=False))
+        cont = soup.find("a", id="continue")
+        if frames and cont is not None and cont.get("href"):
+            r = follow(self.b, self.b.get(urljoin(r.url, cont["href"]), allow_redirects=False))
         assert "Invalid redirect uri" not in r.text,             "Keycloak: Invalid redirect uri (post logout redirect URI missing on the librechat client)"
-        return {"end_session": redirect.split("?")[0], "confirmed": confirm is not None, "landed": r.url}
+        return {"end_session": redirect.split("?")[0], "confirmed": confirm is not None, "landed": r.url,
+                "frontchannel": [urlparse(f).netloc + urlparse(f).path for f in frames]}
 
     def connect_dolibarr(self) -> dict:
         """Connect icon -> Continue with OAuth: Dolibarr login (through Keycloak) -> consent -> allow.
