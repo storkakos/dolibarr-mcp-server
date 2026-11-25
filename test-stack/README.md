@@ -186,12 +186,15 @@ list take as long as with Caddy.
 
 ## LLM key
 
-LibreChat needs a model with tool calls for the chat checks. The example uses OpenRouter. Put your
-key into `test-stack/llm.env`, which is git-ignored and never committed:
+LibreChat needs a model with tool calls for the chat checks. The test stack uses one LiteLLM endpoint. Put
+its key, base URL and model into `test-stack/llm.env`, which is git-ignored and never committed:
 
 ```sh
 umask 077
-echo 'OPENROUTER_KEY=<your key>' > llm.env
+printf 'LITELLM_KEY=<your key>
+LITELLM_BASE_URL=<endpoint URL>
+LITELLM_MODEL=<model>
+' > llm.env
 docker compose up -d librechat        # pick up the key
 ```
 
@@ -199,9 +202,10 @@ To use a key file somewhere else, set `LLM_ENV_FILE` to its path when you start 
 run the checks; compose reads it in place. On the test VM, `scripts/stack-on-vm.sh` does this with
 the shared key `/root/shared/llm.env` (see [test-vm.md](../docs/agents/test-vm.md#llm-key)).
 
-The model is OpenRouter's free route `openrouter/free`; on the test VM the shared key file
-`/root/shared/llm.env` is the default. For another provider or model, change the endpoint in
-`librechat/librechat.yaml` and the key name in `llm.env`. Without a key file, `checks.py` reports
+On the test VM the shared key file `/root/shared/llm.env` is the default; it has `LITELLM_KEY`,
+`LITELLM_BASE_URL` and `LITELLM_MODEL`, which the `LiteLLM` endpoint in `librechat/librechat.yaml`
+reads. For another provider or model, change that endpoint and the variables in `llm.env`. A chat
+check retries once on an empty answer and says so in its output. Without a key file, `checks.py` reports
 the two chat checks as SKIP ("no shared LLM key"), and SKIPs do not fail the run.
 
 ## Screenshots
