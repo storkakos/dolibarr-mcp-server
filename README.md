@@ -158,6 +158,7 @@ URL stays exactly as written in `MCP_RESOURCE_URL`.
 nginx (tested: the test stack's [nginx variant](test-stack/README.md#nginx-variant) builds its
 configuration from this block and the one under [path prefix](#resource-url-with-a-path-prefix)):
 
+<!-- test-stack nginx block: mcp-server. The test stack's nginx variant (test-stack/nginx/build-conf.sh) builds its configuration from the next code block. Keep this line directly above it. -->
 ```nginx
 server {
     listen 443 ssl;
@@ -205,6 +206,7 @@ If the server shares a host with other services and lives under a path, e.g.
 
 nginx, inside the `server` block of `apps.example.com`:
 
+<!-- test-stack nginx block: mcp-prefix. The test stack's nginx variant (test-stack/nginx/build-conf.sh) builds its configuration from the next code block. Keep this line directly above it. -->
 ```nginx
 location = /dolibarr/mcp {
     proxy_pass http://127.0.0.1:8131/mcp;

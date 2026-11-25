@@ -84,17 +84,19 @@ log:
 
 | Block | Taken from | Found by | Used for |
 |---|---|---|---|
-| server block for the MCP server | [`../README.md`](../README.md#reverse-proxy-tls), "Reverse proxy (TLS)" | `server_name mcp.example.com;` | `mcp.example.com`, as written |
-| path prefix | [`../README.md`](../README.md#resource-url-with-a-path-prefix), "Resource URL with a path prefix" | `location = /dolibarr/mcp {` | inside the server block for `apps.example.com`, in front of a second MCP server `mcp-prefix` with `MCP_RESOURCE_URL=https://apps.example.com/dolibarr/mcp` |
-| discovery rules | restoauth's `README.md`, "Rewrite rules for discovery", the copy that comes with the installed module (`htdocs/custom/restoauth/README.md`) | `/custom/restoauth/metadata.php` | inside the server block for `erp.example.com`, in front of Dolibarr's Apache |
+| server block for the MCP server | [`../README.md`](../README.md#reverse-proxy-tls), "Reverse proxy (TLS)" | marker `<!-- test-stack nginx block: mcp-server ... -->` directly above it | `mcp.example.com`, as written |
+| path prefix | [`../README.md`](../README.md#resource-url-with-a-path-prefix), "Resource URL with a path prefix" | marker `<!-- test-stack nginx block: mcp-prefix ... -->` directly above it | inside the server block for `apps.example.com`, in front of a second MCP server `mcp-prefix` with `MCP_RESOURCE_URL=https://apps.example.com/dolibarr/mcp` |
+| discovery rules | restoauth's `README.md`, "Rewrite rules for discovery", the copy that comes with the installed module (`htdocs/custom/restoauth/README.md`) | the text `/custom/restoauth/metadata.php` (restoauth's README has no marker) | inside the server block for `erp.example.com`, in front of Dolibarr's Apache |
 
 The stack fills in only what the documentation leaves to the reader: the certificate paths
 (`ssl_certificate`, `ssl_certificate_key`), the upstream (`127.0.0.1:8131` becomes the MCP container)
 and the server blocks around the location snippets, plus plain proxy blocks for `sso` and `chat`.
-A block that is missing or found twice stops the proxy with `[nginx-variant] ...`, a block nginx
-refuses stops it at `nginx -t`, and a block that loads but does not work fails the setup or the
-check list. When you change one of these blocks, keep the text it is found by, or change
-`nginx/build-conf.sh` with it.
+A block that is missing or found twice stops the proxy with `[nginx-variant] ...` naming the marker
+or text it looked for, a block nginx refuses stops it at `nginx -t`, and a block that loads but does
+not work fails the setup or the check list. The text around and inside this repo's two blocks can be
+reworded freely; keep each marker line directly above its ```` ```nginx ```` block. pytest
+(`tests/test_test_stack_scripts.py`) runs `nginx/build-conf.sh --extract-only` on the README, so a lost
+marker shows up there before any stack runs.
 
 What else differs from the Caddy stack:
 
@@ -104,8 +106,8 @@ What else differs from the Caddy stack:
 - restoauth's allowed resources contain both `https://mcp.example.com/mcp` and
   `https://apps.example.com/dolibarr/mcp`.
 - The proxy starts once Dolibarr (restoauth installed), both MCP servers and Keycloak are up.
-- `make-certs.sh` puts `apps.example.com` into the certificate. A `certs/` folder made before that
-  lacks it (`make-certs.sh` says so): delete `certs/` and run it again.
+- `make-certs.sh` puts `apps.example.com` into the certificate. If an existing `certs/site.crt` lacks
+  it (or any other hostname of the stack), `make-certs.sh` issues it again with the existing test CA.
 
 nginx is pinned in `compose.nginx.yaml` (`nginx:1.30.5`, a stable release). The run and the check
 list take as long as with Caddy.
@@ -174,7 +176,9 @@ docker compose down -v            # removes the containers and all volumes (data
 docker compose up -d --build      # then start again from a clean state
 ```
 
-`certs/` stays; delete it and run `./make-certs.sh` for new certificates. To also remove the images
+`certs/` stays; delete it and run `./make-certs.sh` for new certificates. `make-certs.sh` also issues
+`site.crt` again by itself when it lacks a hostname of the stack or expires within a day (with a new
+test CA if `certs/ca.key` is gone). To also remove the images
 built here: `docker rmi dolibarr-mcp-test-dolibarr:local dolibarr-mcp-server:test-stack-local
 dolibarr-mcp-test-client:local`.
 
