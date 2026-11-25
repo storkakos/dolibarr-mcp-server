@@ -1,17 +1,23 @@
-# TEST ONLY. LibreChat v0.8.9 config of the test stack: the snippets of
+# TEST ONLY. Template of the LibreChat v0.8.9 config of the test stack. Compose renders it when the
+# container starts into /tmp/librechat.yaml (CONFIG_PATH) and replaces only __LITELLM_MODEL__ with the
+# value of LITELLM_MODEL, because LibreChat does not substitute ${...} in model names. Key and base URL
+# stay ${...}. Twin: itop-mcp-server test-infra 09 (same idea, its own render step, no shared script).
+# The config: the snippets of
 # docs/setup/example-keycloak-librechat.md, plus one AI model (not part of the example setup).
 version: 1.3.19
 
-# --- Your LLM endpoint (not part of the example setup). The example uses OpenRouter with
-# OPENROUTER_KEY from llm.env. For another provider, change this block, the key name in llm.env and
-# the preset below. Use a model that supports tool calls.
+# --- Your LLM endpoint (not part of the example setup). The test stack uses the shared LiteLLM endpoint:
+# key, base URL and model come from the key file (llm.env, or LLM_ENV_FILE) as LITELLM_KEY,
+# LITELLM_BASE_URL and LITELLM_MODEL; compose passes that file to LibreChat. For another provider or
+# model, change this block, the variables in the key file and the preset below. Use a model that
+# supports tool calls.
 endpoints:
   custom:
-    - name: OpenRouter
-      apiKey: "${OPENROUTER_KEY}"
-      baseURL: https://openrouter.ai/api/v1
+    - name: LiteLLM
+      apiKey: "${LITELLM_KEY}"
+      baseURL: "${LITELLM_BASE_URL}"
       models:
-        default: ["openai/gpt-4o-mini"]
+        default: ["__LITELLM_MODEL__"]
         fetch: false
       titleConvo: false
 
@@ -42,7 +48,7 @@ modelSpecs:
       description: Answers questions about Dolibarr with your own Dolibarr rights
       preset:
         # Your endpoint and model (see above).
-        endpoint: OpenRouter
-        model: openai/gpt-4o-mini
+        endpoint: LiteLLM
+        model: __LITELLM_MODEL__
       mcpServers:
         - dolibarr

@@ -186,12 +186,13 @@ list take as long as with Caddy.
 
 ## LLM key
 
-LibreChat needs a model with tool calls for the chat checks. The example uses OpenRouter. Put your
-key into `test-stack/llm.env`, which is git-ignored and never committed:
+LibreChat needs a model with tool calls for the chat checks. The test stack uses one LiteLLM endpoint. Put
+its key, base URL and model into `test-stack/llm.env`, which is git-ignored and never committed:
 
 ```sh
 umask 077
-echo 'OPENROUTER_KEY=<your key>' > llm.env
+printf '%s
+' 'LITELLM_KEY=<your key>' 'LITELLM_BASE_URL=<endpoint URL>' 'LITELLM_MODEL=<model>' > llm.env
 docker compose up -d librechat        # pick up the key
 ```
 
@@ -199,9 +200,10 @@ To use a key file somewhere else, set `LLM_ENV_FILE` to its path when you start 
 run the checks; compose reads it in place. On the test VM, `scripts/stack-on-vm.sh` does this with
 the shared key `/root/shared/llm.env` (see [test-vm.md](../docs/agents/test-vm.md#llm-key)).
 
-For another provider, change the endpoint in `librechat/librechat.yaml` and the key name in
-`llm.env`. Without a key file, `checks.py` reports the two chat checks as SKIP ("no shared LLM
-key"), and SKIPs do not fail the run.
+On the test VM the shared key file `/root/shared/llm.env` is the default; it has `LITELLM_KEY`,
+`LITELLM_BASE_URL` and `LITELLM_MODEL`. Compose renders `librechat/librechat.yaml.tmpl` when LibreChat starts (LibreChat does not substitute `${LITELLM_MODEL}` in model names, so only the model name is filled in; key and base URL stay `${...}` in the `LiteLLM` endpoint). For another provider or model, change that endpoint and the variables in `llm.env`. A chat
+check retries once on an empty answer and says so in its output. Without a key file, `checks.py` reports
+the two chat checks as SKIP ("no shared LLM key"), and SKIPs do not fail the run.
 
 ## Screenshots
 
@@ -269,7 +271,7 @@ dolibarr-mcp-test-client:local`.
 | Trust the test CA, install restoauth from the ZIP into `htdocs/custom/restoauth` (the way Dolibarr's module upload does), on every start | `dolibarr/50-test-stack.sh` |
 | Enable API REST, third parties, invoices, proposals, orders, products, services, scheduled jobs and restoauth; allowed resources, redirect allowlist, loopback off, short access token lifetime, `API_IN_TOKEN_TABLE` off; `openid_connect` against Keycloak; test users and rights; sample data | `dolibarr/configure.php` (Dolibarr's own PHP functions) |
 | Keycloak realm `example`, clients `dolibarr` (with front-channel logout to Dolibarr's logout page) and `librechat` (with the post-logout redirect URIs), test users; no self-registration, usernames cannot be changed. An existing client is merged, not replaced: settings the setup does not own stay | `client/keycloak_realm.py` (the example setup's values) |
-| LibreChat `.env` and `librechat.yaml`: Keycloak login and logout, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
+| LibreChat `.env` and `librechat.yaml.tmpl` (rendered at start): Keycloak login and logout, the `dolibarr` MCP server, allowed domains, the Dolibarr assistant model spec, one LLM endpoint | `librechat/` (the example setup's snippets) |
 | nginx variant: nginx as TLS proxy, its configuration assembled from the READMEs' nginx blocks; a second MCP server under a path prefix (see [nginx variant](#nginx-variant)) | `compose.nginx.yaml`, `nginx/build-conf.sh` |
 | Checks through the proxy: Keycloak metadata, restoauth metadata at `/.well-known/oauth-authorization-server/custom/restoauth` and at the issuer path, Keycloak button on Dolibarr's login page, the MCP server's `401` challenge and protected resource metadata | `client/setup.py` |
 | End-to-end checks: OAuth flow, rights, how a connection ends and LibreChat (on demand, see [End-to-end checks](#end-to-end-checks)), one file per check group (see [Check groups](#check-groups)) | `client/groups/*.py`, run by `client/checks.py`; `client/checklib.py`, `client/flows.py` |

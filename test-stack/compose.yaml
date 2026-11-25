@@ -158,6 +158,18 @@ services:
       # LLM_ENV_FILE points elsewhere, e.g. at the test VM's shared key (scripts/stack-on-vm.sh).
       - path: ${LLM_ENV_FILE:-./llm.env}
         required: false
+    # LibreChat does not substitute ${LITELLM_MODEL} in model names, so the config is rendered at start:
+    # only __LITELLM_MODEL__ of the template is replaced (key and base URL stay ${...} for LibreChat).
+    # Without a key file the model is "none"; the chat checks skip then.
+    # The model name must not contain | & or a backslash. Twin: itop-mcp-server test-infra 09.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        sed "s|__LITELLM_MODEL__|$${LITELLM_MODEL:-none}|g" /librechat.yaml.tmpl > /tmp/librechat.yaml
+        exec "$$@"
+      - librechat
+    command: ["npm", "run", "backend"]
     environment:
       HOST: 0.0.0.0
       PORT: "3080"
@@ -168,8 +180,9 @@ services:
       # LOGIN_WINDOW minutes; LibreChat's default 7 per 5) raised so that the check list can run several
       # times in a row. The example setup keeps LibreChat's default (see README, "LibreChat's login limit").
       LOGIN_MAX: ${TEST_LIBRECHAT_LOGIN_MAX:-100}
+      CONFIG_PATH: /tmp/librechat.yaml
     volumes:
-      - ./librechat/librechat.yaml:/app/librechat.yaml:ro
+      - ./librechat/librechat.yaml.tmpl:/librechat.yaml.tmpl:ro
       - ./certs/ca.crt:/certs/ca.crt:ro
     <<: *net
 
