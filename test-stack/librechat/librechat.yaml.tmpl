@@ -1,4 +1,8 @@
-# TEST ONLY. LibreChat v0.8.9 config of the test stack: the snippets of
+# TEST ONLY. Template of the LibreChat v0.8.9 config of the test stack. Compose renders it when the
+# container starts into /tmp/librechat.yaml (CONFIG_PATH) and replaces only __LITELLM_MODEL__ with the
+# value of LITELLM_MODEL, because LibreChat does not substitute ${...} in model names. Key and base URL
+# stay ${...}. Twin: itop-mcp-server test-infra 09 (same idea, its own render step, no shared script).
+# The config: the snippets of
 # docs/setup/example-keycloak-librechat.md, plus one AI model (not part of the example setup).
 version: 1.3.19
 
@@ -13,7 +17,7 @@ endpoints:
       apiKey: "${LITELLM_KEY}"
       baseURL: "${LITELLM_BASE_URL}"
       models:
-        default: ["${LITELLM_MODEL}"]
+        default: ["__LITELLM_MODEL__"]
         fetch: false
       titleConvo: false
 
@@ -45,6 +49,6 @@ modelSpecs:
       preset:
         # Your endpoint and model (see above).
         endpoint: LiteLLM
-        model: ${LITELLM_MODEL}
+        model: __LITELLM_MODEL__
       mcpServers:
         - dolibarr
