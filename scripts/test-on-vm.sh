@@ -61,9 +61,14 @@ git ls-files -z --cached --others --exclude-standard | tar --null -T - -cf - \
   | "${SSH[@]}" "mkdir $DIR && tar -xf - -C $DIR"
 
 # Our own -q only when the caller passes none: pytest counts -q, and -qq drops the summary line.
+# Combined short flags count too (-qx, -xq, -qq); a long option (--...) never does.
 quiet=-q
 for arg in "$@"; do
-  if [ "$arg" = -q ] || [ "$arg" = --quiet ]; then quiet=; fi
+  case "$arg" in
+    --quiet) quiet= ;;
+    --*) ;;
+    -*q*) quiet= ;;
+  esac
 done
 
 # The folder is mounted read-only and copied inside the container, so the install leaves nothing
