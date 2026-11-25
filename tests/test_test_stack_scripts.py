@@ -142,3 +142,42 @@ def test_make_certs_makes_the_folder_again_without_the_ca_key(tmp_path: Path):
     assert "made certs/ again" in out.stdout
     assert _sans(certs) == set(HOSTS)
     _openssl("verify", "-CAfile", "ca.crt", "site.crt", cwd=certs)
+
+
+DISCOVERY_BLOCK = r"""location ~ ^/\.well-known/(oauth-authorization-server|openid-configuration)/custom/restoauth/?$ {
+    rewrite ^ /custom/restoauth/metadata.php last;
+}
+"""
+
+
+def _discovery(tmp_path: Path, restoauth_readme: str) -> subprocess.CompletedProcess[str]:
+    (tmp_path / "restoauth.md").write_text(restoauth_readme, encoding="utf-8")
+    return subprocess.run(["sh", str(BUILD_CONF), "--extract-only", str(ROOT / "README.md"),
+                           str(tmp_path / "restoauth.md")],
+                          capture_output=True, text=True, timeout=30)
+
+
+@needs_sh
+def test_discovery_block_is_found_by_its_marker(tmp_path: Path):
+    other = "```nginx\nlocation /other/custom/restoauth/metadata.php { }\n```\n\n"
+    marked = ("<!-- test-stack nginx block: restoauth-discovery. text -->\n```nginx\n"
+              + DISCOVERY_BLOCK + "```\n")
+    out = _discovery(tmp_path, other + marked)
+    assert out.returncode == 0, out.stderr
+    assert "restoauth discovery block: found by marker" in out.stderr
+    assert "# ---- restoauth-discovery (found by marker) ----\n" + DISCOVERY_BLOCK in out.stdout
+
+
+@needs_sh
+def test_discovery_block_falls_back_to_its_text_without_marker(tmp_path: Path):
+    out = _discovery(tmp_path, "```nginx\n" + DISCOVERY_BLOCK + "```\n")
+    assert out.returncode == 0, out.stderr
+    assert "restoauth discovery block: found by text (fallback" in out.stderr
+    assert DISCOVERY_BLOCK in out.stdout
+
+
+@needs_sh
+def test_discovery_block_missing_stops(tmp_path: Path):
+    out = _discovery(tmp_path, "```nginx\nserver { }\n```\n")
+    assert out.returncode != 0
+    assert "no nginx block with '/custom/restoauth/metadata.php'" in out.stderr

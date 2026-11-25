@@ -158,7 +158,7 @@ log:
 |---|---|---|---|
 | server block for the MCP server | [`../README.md`](../README.md#reverse-proxy-tls), "Reverse proxy (TLS)" | marker `<!-- test-stack nginx block: mcp-server ... -->` directly above it | `mcp.example.com`, as written |
 | path prefix | [`../README.md`](../README.md#resource-url-with-a-path-prefix), "Resource URL with a path prefix" | marker `<!-- test-stack nginx block: mcp-prefix ... -->` directly above it | inside the server block for `apps.example.com`, in front of a second MCP server `mcp-prefix` with `MCP_RESOURCE_URL=https://apps.example.com/dolibarr/mcp` |
-| discovery rules | restoauth's `README.md`, "Rewrite rules for discovery", the copy that comes with the installed module (`htdocs/custom/restoauth/README.md`) | the text `/custom/restoauth/metadata.php` (restoauth's README has no marker) | inside the server block for `erp.example.com`, in front of Dolibarr's Apache |
+| discovery rules | restoauth's `README.md`, "Rewrite rules for discovery", the copy that comes with the installed module (`htdocs/custom/restoauth/README.md`) | marker `<!-- test-stack nginx block: restoauth-discovery. ... -->` directly above it; a README without the marker (a restoauth release from before it) falls back to the text `/custom/restoauth/metadata.php`, and the log says `restoauth discovery block: found by marker` or `found by text (fallback ...)` | inside the server block for `erp.example.com`, in front of Dolibarr's Apache |
 
 The stack fills in only what the documentation leaves to the reader: the certificate paths
 (`ssl_certificate`, `ssl_certificate_key`), the upstream (`127.0.0.1:8131` becomes the MCP container)

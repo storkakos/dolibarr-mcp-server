@@ -12,14 +12,21 @@
 # configuration the documentation does not cover (the server blocks of erp, sso and chat around them).
 # This repo's README marks its two blocks with an HTML comment directly above the code block,
 #   <!-- test-stack nginx block: mcp-server ... -->   and   <!-- test-stack nginx block: mcp-prefix ... -->
-# so its text can be reworded freely. restoauth's README has no such marker yet; its block is found by
-# the text '/custom/restoauth/metadata.php'.
+# so its text can be reworded freely. restoauth's README marks its block the same way,
+#   <!-- test-stack nginx block: restoauth-discovery. ... -->
+# and the block is taken from there. The copy installed with the module (release ZIP, pinned
+# RESTOAUTH_VERSION) has the marker only from the restoauth release that carries it; without it the
+# block is found by its text '/custom/restoauth/metadata.php' (fallback). The script prints which
+# way it found the block: "restoauth discovery block: found by marker" or "... by text (fallback)".
 # A block that cannot be found, or found more than once, stops the proxy, and so does a
 # configuration that nginx refuses; the setup then fails.
 #
-#   build-conf.sh --extract-only [README]   prints the marked blocks of this repo's README (default:
+#   build-conf.sh --extract-only [README [RESTOAUTH_README]]
+#                                           prints the marked blocks of this repo's README (default:
 #                                           ../../README.md next to this script) and exits; no nginx,
-#                                           no restoauth needed. tests/test_test_stack_scripts.py uses it.
+#                                           no restoauth needed. With a RESTOAUTH_README it also prints
+#                                           restoauth's discovery block and how it was found.
+#                                           tests/test_test_stack_scripts.py uses it.
 set -eu
 
 MCP_README=/docs/mcp-server/README.md
@@ -29,6 +36,7 @@ if [ "${1:-}" = --extract-only ]; then
   MCP_README=${2:-$(dirname "$0")/../../README.md}
 fi
 RESTOAUTH_README=/var/www/html/custom/restoauth/README.md   # Dolibarr's custom folder (volume)
+[ -z "$EXTRACT_ONLY" ] || RESTOAUTH_README=${3:-}
 OUT=/etc/nginx/conf.d/default.conf
 W=/tmp/doc-blocks
 
@@ -99,13 +107,30 @@ fill() {
 extract_marked "$MCP_README" mcp-server
 MCP_SERVER=$(marked mcp-server mcp-server)
 MCP_PREFIX=$(marked mcp-prefix mcp-server)
+# restoauth's discovery block: by its marker, else (README without the marker) by its text.
+find_discovery() {
+  [ -s "$RESTOAUTH_README" ] || fail "$RESTOAUTH_README missing or empty"
+  extract_marked "$RESTOAUTH_README" marked-restoauth
+  if [ -s "$W/marked-restoauth-restoauth-discovery.conf" ]; then
+    DISCOVERY=$W/marked-restoauth-restoauth-discovery.conf
+    DISCOVERY_HOW="found by marker"
+  else
+    split_blocks "$RESTOAUTH_README" restoauth
+    DISCOVERY=$(pick '/custom/restoauth/metadata.php' restoauth)
+    DISCOVERY_HOW="found by text (fallback: no marker 'restoauth-discovery' in this README)"
+  fi
+  echo "[nginx-variant] restoauth discovery block: $DISCOVERY_HOW" >&2
+}
 if [ -n "$EXTRACT_ONLY" ]; then
   echo "# ---- mcp-server ----"; cat "$MCP_SERVER"
   echo "# ---- mcp-prefix ----"; cat "$MCP_PREFIX"
+  if [ -n "$RESTOAUTH_README" ]; then
+    find_discovery
+    echo "# ---- restoauth-discovery ($DISCOVERY_HOW) ----"; cat "$DISCOVERY"
+  fi
   exit 0
 fi
-split_blocks "$RESTOAUTH_README" restoauth
-DISCOVERY=$(pick '/custom/restoauth/metadata.php' restoauth)
+find_discovery
 
 TLS='    listen 443 ssl;
     http2 on;
@@ -146,7 +171,7 @@ EOF
   echo "    server_name erp.example.com;"
   echo "$TLS"
   echo "    client_max_body_size 50m;"
-  echo "    # ---- restoauth README.md, \"Rewrite rules for discovery\", nginx ----"
+  echo "    # ---- restoauth README.md, \"Rewrite rules for discovery\", nginx ($DISCOVERY_HOW) ----"
   fill "$DISCOVERY" dolibarr:80 | sed 's/^/    /'
   echo "    # ---- end restoauth README.md ----"
   echo "    location / {"
