@@ -44,6 +44,8 @@ line per check (`PASS`, `FAIL` or `SKIP`); it exits with 1 if a check failed.
 `docker compose run --rm client python checks.py -v` adds the traceback of a failed check. It takes
 about two and a half minutes, mostly waiting for the MCP server's rights cache (30 s) after a
 revocation; the expiry check's wait for the short access token lifetime (60 s) overlaps with those.
+On the test VM, `scripts/stack-on-vm.sh` does a whole run (Caddy or `--nginx`) with its own
+project name and image tags, from start to clean-up (see `docs/agents/test-vm.md`).
 
 | Part | Checks |
 |---|---|
