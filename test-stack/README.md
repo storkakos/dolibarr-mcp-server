@@ -199,9 +199,10 @@ To use a key file somewhere else, set `LLM_ENV_FILE` to its path when you start 
 run the checks; compose reads it in place. On the test VM, `scripts/stack-on-vm.sh` does this with
 the shared key `/root/shared/llm.env` (see [test-vm.md](../docs/agents/test-vm.md#llm-key)).
 
-For another provider, change the endpoint in `librechat/librechat.yaml` and the key name in
-`llm.env`. Without a key file, `checks.py` reports the two chat checks as SKIP ("no shared LLM
-key"), and SKIPs do not fail the run.
+The model is OpenRouter's free route `openrouter/free`; on the test VM the shared key file
+`/root/shared/llm.env` is the default. For another provider or model, change the endpoint in
+`librechat/librechat.yaml` and the key name in `llm.env`. Without a key file, `checks.py` reports
+the two chat checks as SKIP ("no shared LLM key"), and SKIPs do not fail the run.
 
 ## Screenshots
 

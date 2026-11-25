@@ -114,7 +114,7 @@ The two chat checks (LibreChat answers whoami through the MCP server) need an LL
 - `scripts/stack-on-vm.sh` lets the stack read the file where it is: it sets `LLM_ENV_FILE=/root/shared/llm.env`, and `test-stack/compose.yaml` passes that file to LibreChat and the check client as an `env_file` (optional), so the key is in their environment at runtime only, not in an image or a file of the run. This works the same for the Caddy stack and the nginx variant (`compose.nginx.yaml` does not touch either service's `env_file`).
 - Without the file, both chat checks report `SKIP no shared LLM key`, and the run's exit code ignores SKIPs. To try that, point `VM_LLM_ENV` at a path that does not exist (`VM_LLM_ENV=/root/shared/none.env RUN=dl-x bash scripts/stack-on-vm.sh`); never move or rename the real file.
 - After the checks, also when a check failed, the script looks for the key's values on the VM in the start log, the logs of all the stack's containers, the check output and the config of the run's images, and prints only where it found one (exit 5 when the checks passed). By hand, compare on the VM without printing the key, e.g. `grep -qF "$(sed -n 's/^LLM_KEY=//p' /root/shared/llm.env | cut -c10-25)" <file> && echo found`.
-- The chat model is set in `test-stack/librechat/librechat.yaml` (endpoint OpenRouter, key `OPENROUTER_KEY`).
+- The chat model is set in `test-stack/librechat/librechat.yaml`: endpoint OpenRouter, key `OPENROUTER_KEY`, model `openrouter/free` (OpenRouter's free route, the same as in `itop-mcp-server`).
 
 The sections below are the manual steps, for the smoke test, the test stack and debugging.
 
