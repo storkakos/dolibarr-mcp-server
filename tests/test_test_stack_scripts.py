@@ -159,28 +159,18 @@ def _discovery(tmp_path: Path, restoauth_readme: str) -> subprocess.CompletedPro
 
 @needs_sh
 def test_discovery_block_is_found_by_its_marker(tmp_path: Path):
-    other = "```nginx
-location /other/custom/restoauth/metadata.php { }
-```
-
-"
-    marked = ("<!-- test-stack nginx block: restoauth-discovery. text -->
-```nginx
-"
-              + DISCOVERY_BLOCK + "```
-")
+    other = "```nginx\nlocation /other/custom/restoauth/metadata.php { }\n```\n\n"
+    marked = ("<!-- test-stack nginx block: restoauth-discovery. text -->\n```nginx\n"
+              + DISCOVERY_BLOCK + "```\n")
     out = _discovery(tmp_path, other + marked)
     assert out.returncode == 0, out.stderr
     assert "restoauth discovery block: found by marker" in out.stderr
-    assert "# ---- restoauth-discovery (found by marker) ----
-" + DISCOVERY_BLOCK in out.stdout
+    assert "# ---- restoauth-discovery (found by marker) ----\n" + DISCOVERY_BLOCK in out.stdout
 
 
 @needs_sh
 def test_discovery_block_falls_back_to_its_text_without_marker(tmp_path: Path):
-    out = _discovery(tmp_path, "```nginx
-" + DISCOVERY_BLOCK + "```
-")
+    out = _discovery(tmp_path, "```nginx\n" + DISCOVERY_BLOCK + "```\n")
     assert out.returncode == 0, out.stderr
     assert "restoauth discovery block: found by text (fallback" in out.stderr
     assert DISCOVERY_BLOCK in out.stdout
@@ -188,9 +178,6 @@ def test_discovery_block_falls_back_to_its_text_without_marker(tmp_path: Path):
 
 @needs_sh
 def test_discovery_block_missing_stops(tmp_path: Path):
-    out = _discovery(tmp_path, "```nginx
-server { }
-```
-")
+    out = _discovery(tmp_path, "```nginx\nserver { }\n```\n")
     assert out.returncode != 0
     assert "no nginx block with '/custom/restoauth/metadata.php'" in out.stderr
