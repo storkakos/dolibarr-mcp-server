@@ -8,8 +8,8 @@ The checks find their data by name and do not count products or documents, so a 
 than the sample data (TEST_EXTRA_DATA) passes too.
 Finally the example setup (docs/setup/example-keycloak-librechat.md): LibreChat users log in through
 Keycloak, connect the dolibarr server through restoauth's consent page and ask whoami in a chat (the
-chat checks need an LLM key in llm.env and are skipped without it); the Keycloak setup run again keeps
-client settings it does not own; after a LibreChat logout Keycloak asks for a password and another user
+chat checks need an LLM key in llm.env or LLM_ENV_FILE and report SKIP without it); the Keycloak setup
+run again keeps client settings it does not own; after a LibreChat logout Keycloak asks for a password and another user
 logs in; after a LibreChat logout the Dolibarr session in the browser has ended too, so the next user
 consents as themselves (client/user_switch.py). Five LibreChat logins in all; LibreChat counts two
 requests per login against its limit of seven per five minutes, and a login that would hit the limit
@@ -544,7 +544,7 @@ def _():
 
 def _whoami_chat(user):
     if not flows.llm_key_present():
-        return "SKIP no LLM key (llm.env), see README"
+        return "SKIP no shared LLM key (/root/shared/llm.env on the test VM, else test-stack/llm.env), see README"
     lc = chats[user[0]]
     spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == "dolibarr-assistant")
     calls, text = lc.ask("Use the whoami tool: who am I in Dolibarr?", spec)
