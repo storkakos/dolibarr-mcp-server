@@ -781,7 +781,7 @@ display names in the two systems.
 [check list](#check-list) (check 6) for that server only; the other one keeps working.
 
 Tested in a combined run on the test VM: one Keycloak realm, one LibreChat v0.8.9, Dolibarr 23.0.4
-with restoauth 0.3.0 and iTop 3.2.3 with altioo-oauth-server, both MCP servers behind one TLS proxy
+with restoauth 0.3.1 and iTop 3.2.3 with altioo-oauth-server, both MCP servers behind one TLS proxy
 under the hostnames of the table above. LibreChat loaded exactly this configuration, and an MCP
 client went through the OAuth flow (Keycloak login, consent) of both servers and called both
 `whoami` tools. The chat itself, one model calling both tools, was verified in an earlier combined

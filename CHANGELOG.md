@@ -25,7 +25,7 @@ chapters).
   profiles. After Dolibarr's own **Logout**, the next Keycloak login within an hour ends logged out
   once. See `docs/setup/example-keycloak-librechat.md`.
 - The MCP server itself is unchanged.
-- The test stack and documentation now use restoauth 0.3.0 (release ZIP sha256 `875c5824a3053cb81e17da3bd70a02e4ce89b6b610e339cbfbc55a3cbbc47bde`).
+- The test stack and documentation now use restoauth 0.3.1 (release ZIP sha256 `71039e30a823bebe7a9c621da7bd5c241109e758e9b11fdc49dd32897bd1af7d`). Tested with restoauth 0.3.1.
 
 ## 0.1.1 - 2026-11-24
 
