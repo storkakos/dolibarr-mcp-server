@@ -198,3 +198,9 @@ def _():
 def _():
     import user_switch  # the scenario lives in its own file (combined-stack-findings 06)
     return user_switch.verdict(user_switch.run())
+
+
+@check("example 9: Dolibarr's own Logout, then a Keycloak login lands where it should")
+def _():
+    import dolibarr_logout
+    return dolibarr_logout.verdict(dolibarr_logout.run())

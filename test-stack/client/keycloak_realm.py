@@ -80,12 +80,12 @@ def setup_realm() -> None:
     # Dolibarr 23's openid_connect callback (core/lib/openid_connect.lib.php) and its login page after logout.
     # The post-logout URI ends in a wildcard: Dolibarr 23 appends "?client_id=..&returnTo=.." to the
     # configured logout URL, so the post_logout_redirect_uri Keycloak receives is index.php plus that text.
-    # Front-channel logout to Dolibarr's logout page: a Keycloak logout (e.g. LibreChat's Log out) ends the
+    # Front-channel logout to restoauth's endpoint: a Keycloak logout (e.g. LibreChat's Log out) ends the
     # Dolibarr session in the browser too, so the next user does not consent as the previous one.
-    # user/logout.php needs no CSRF token; noredirect=1 keeps it from sending the iframe on to Keycloak's
-    # logout (MAIN_AUTHENTICATION_OIDC_LOGOUT_URL).
+    # restoauth's frontchannel-logout.php handles the session end without the side effect that
+    # user/logout.php had (showing the login page inside the iframe after Dolibarr's own Logout).
     client("dolibarr", "Dolibarr", DOLIBARR, f"{DOLIBARR}/core/modules/openid_connect/callback.php",
-           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR, f"{DOLIBARR}/user/logout.php?noredirect=1")
+           f"{DOLIBARR}/index.php*", KC_SECRET_DOLIBARR, f"{DOLIBARR}/custom/restoauth/frontchannel-logout.php")
     # LibreChat's OpenID login callback (OPENID_CALLBACK_URL in librechat/librechat.env) and its login page
     # after logout (OPENID_POST_LOGOUT_REDIRECT_URI). Without the latter, Keycloak answers LibreChat's
     # logout with "Invalid redirect uri" and keeps the session.
