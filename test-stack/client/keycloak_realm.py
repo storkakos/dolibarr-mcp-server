@@ -1,5 +1,5 @@
 """TEST ONLY. Keycloak through its admin REST API: realm `example`, client `dolibarr` for Dolibarr's
-openid_connect login (with front-channel logout to Dolibarr's logout page), client `librechat` for the
+openid_connect login (with front-channel logout to restoauth's frontchannel-logout.php), client `librechat` for the
 LibreChat login, and the test users.
 
 Same values as the admin-console tables in docs/setup/example-keycloak-librechat.md. Differences for
