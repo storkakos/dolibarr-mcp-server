@@ -684,7 +684,8 @@ row.
 ### 9. Dolibarr's own Logout, then a Keycloak login lands where it should
 
 Log into Dolibarr with Keycloak (check 3), then log out of Dolibarr using Dolibarr's own **Logout**
-button (not through LibreChat). Then log back in with **Use OpenID to login**.
+button (not through LibreChat). Keycloak asks "Do you want to log out?"; click **Logout**. Then log
+back in with **Use OpenID to login**.
 
 **Expected:** After Dolibarr's own Logout, the browser is on Dolibarr's login page. Clicking **Use
 OpenID to login** sends the browser to Keycloak, and after the Keycloak login the browser lands on
