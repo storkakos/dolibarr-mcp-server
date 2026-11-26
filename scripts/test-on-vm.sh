@@ -61,13 +61,14 @@ git ls-files -z --cached --others --exclude-standard | tar --null -T - -cf - \
   | "${SSH[@]}" "mkdir $DIR && tar -xf - -C $DIR"
 
 # Our own -q only when the caller passes none: pytest counts -q, and -qq drops the summary line.
-# Combined short flags count too (-qx, -xq, -qq); a long option (--...) never does.
+# Combined short flags count too (-qx, -xq, -qq); a long option (--...) never does, nor the value of a
+# short option written together with it (-kquick, -xkquick: only the flags before k, m, c, p, o, W, r, n).
 quiet=-q
 for arg in "$@"; do
   case "$arg" in
     --quiet) quiet= ;;
     --*) ;;
-    -*q*) quiet= ;;
+    -*) case "${arg%%[kmcpoWrn]*}" in *q*) quiet= ;; esac ;;
   esac
 done
 

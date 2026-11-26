@@ -221,7 +221,9 @@ the shared key `/root/shared/llm.env` (see [test-vm.md](../docs/agents/test-vm.m
 On the test VM the shared key file `/root/shared/llm.env` is the default; it has `LITELLM_KEY`,
 `LITELLM_BASE_URL` and `LITELLM_MODEL`. Compose renders `librechat/librechat.yaml.tmpl` when LibreChat starts (LibreChat does not substitute `${LITELLM_MODEL}` in model names, so only the model name is filled in; key and base URL stay `${...}` in the `LiteLLM` endpoint). For another provider or model, change that endpoint and the variables in `llm.env`. A chat
 check retries once on an empty answer and says so in its output. Without a key file, `checks.py` reports
-the two chat checks as SKIP ("no shared LLM key"), and SKIPs do not fail the run.
+the two chat checks as SKIP ("no shared LLM key"), and the same with a key file without `LITELLM_MODEL`
+("no LITELLM_MODEL"); SKIPs do not fail the run. The model name reaches LibreChat unchanged, also with
+`&`, `|` or `\` in it.
 
 ## Screenshots
 
@@ -454,6 +456,9 @@ LibreChat's default a single run already reaches the limit and a second run righ
   line (`waited N s for LibreChat's login limit`) and makes that run up to five minutes longer.
 - **Reset**: LibreChat keeps the count in memory, so restarting it starts a new window:
   `docker compose restart librechat` (with `-p $RUN` on the VM). The checks wait until it answers again.
+- **`LIBRECHAT_LOGIN_WINDOW`** (client): when LibreChat sends no `X-RateLimit-Reset`, the checks wait a
+  whole window, this many minutes (default 5, LibreChat's default). Set it on the client to match a
+  changed `LOGIN_WINDOW`.
 
 ## Notes
 
