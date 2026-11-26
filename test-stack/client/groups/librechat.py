@@ -19,6 +19,17 @@ import keycloak_realm
 from checklib import Group, Skip
 from common import CHAT, KC_USERS, REALM, SSO, kc_admin
 
+# Group settings (see combined-test-stack GLOSSARY): values the group takes from the stack it runs on.
+# Defaults are the repo stack's values, so the repo stack behaves as before.
+# TEST_MCP_URL is read in common.py (common.MCP), so every group uses the same address.
+# With the own spec the preselected assistant must have exactly the dolibarr server; with another spec (the
+# combined stack's assistant has several servers) the dolibarr server must be one of them.
+OWN_SPEC = "dolibarr-assistant"
+TEST_DEFAULT_SPEC = os.environ.get("TEST_DEFAULT_SPEC", OWN_SPEC)
+# Spec used to start chats. Defaults to TEST_DEFAULT_SPEC so the repo stack behaves as before;
+# the combined stack sets it to the repo's own assistant while TEST_DEFAULT_SPEC is combo-assistant.
+TEST_CHAT_SPEC = os.environ.get("TEST_CHAT_SPEC", TEST_DEFAULT_SPEC)
+
 # Seconds to wait for LibreChat before the first check of this group (it boots after the setup).
 READY_TIMEOUT = int(os.environ.get("LIBRECHAT_READY_TIMEOUT", "300"))
 
@@ -104,17 +115,18 @@ def _():
 @check("example option: Dolibarr assistant preselected for new chats")
 def _():
     specs = chats[anna[0]].config()["modelSpecs"]
-    spec = next(x for x in specs["list"] if x["name"] == "dolibarr-assistant")
-    assert specs.get("prioritize") is True and spec.get("default") is True \
-        and spec.get("mcpServers") == ["dolibarr"], specs
-    return "default spec dolibarr-assistant with the dolibarr server"
+    spec = next(x for x in specs["list"] if x["name"] == TEST_DEFAULT_SPEC)
+    servers = spec.get("mcpServers") or []
+    own = servers == ["dolibarr"] if TEST_DEFAULT_SPEC == OWN_SPEC else "dolibarr" in servers
+    assert specs.get("prioritize") is True and spec.get("default") is True and own, specs
+    return f"default spec {TEST_DEFAULT_SPEC} with the dolibarr server" + ("" if servers == ["dolibarr"] else f" (servers {servers})")
 
 
 def _whoami_chat(user):
     if not flows.llm_key_present():
         return "SKIP no shared LLM key (LITELLM_KEY in /root/shared/llm.env on the test VM, else test-stack/llm.env), see README"
     lc = chats[user[0]]
-    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == "dolibarr-assistant")
+    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == TEST_CHAT_SPEC)
     calls, text = lc.ask("Use the whoami tool: who am I in Dolibarr?", spec)
     retried = ""
     if not calls and not text.strip():  # the model sometimes answers nothing: ask once more

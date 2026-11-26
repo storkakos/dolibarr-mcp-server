@@ -101,6 +101,25 @@ offers the Keycloak login; neither counts against LibreChat's login limit), up t
 `LIBRECHAT_READY_TIMEOUT` seconds (default 300). If it does not, every check of the group fails with
 "not run: LibreChat at … not ready within … s".
 
+### Group settings
+
+Some check groups take values from the stack they run on as **group settings** (see combined-test-stack
+GLOSSARY). The defaults are the repo stack's values, so the repo stack behaves as before. The combined
+stack sets them instead of patching the groups at run time.
+
+| Setting | Group | Default | Description |
+|---|---|---|---|
+| `TEST_MCP_URL` | all (`common.MCP`) | `https://mcp.example.com/mcp` | The MCP server's public address: the checks call it, compare it with the metadata and config, and expect it in the LibreChat config |
+| `TEST_DEFAULT_SPEC` | `librechat` | `dolibarr-assistant` | The name of the assistant spec LibreChat preselects. With the default the spec must have exactly the dolibarr server; with another name (the combined stack's `combo-assistant`) the dolibarr server must be one of its servers |
+| `TEST_CHAT_SPEC` | `librechat` | `TEST_DEFAULT_SPEC` | The assistant spec used to start chats (whoami checks). Defaults to `TEST_DEFAULT_SPEC` so the repo stack behaves as before; the combined stack sets it to `dolibarr-assistant` while `TEST_DEFAULT_SPEC` is `combo-assistant` |
+
+Set them as environment variables of the client (the combined stack's client sets them before it imports
+a repo's groups):
+
+```sh
+docker compose run --rm -e TEST_DEFAULT_SPEC=combo-assistant client python checks.py librechat
+```
+
 ### Add a check
 
 Add it to the group's file, under the other checks of that group:
