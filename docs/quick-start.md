@@ -119,11 +119,12 @@ Below the settings, the page lists the **Endpoints**. The **issuer** shown there
 ### 3.4 Grant the connect right
 
 Give the users or groups who should use the assistant the right **Connect applications (AI
-assistant) via OAuth with own rights** (module REST OAuth), on their **Permissions** tab. Without
-it, the consent page offers only **Deny**. Administrators may always connect, but an administrator's
-token reads everything: give administrators a second, non-admin account for the assistant.
+assistant) via OAuth with own rights** (module **REST OAuth (AI access)**), on their
+**Permissions** tab. Without it, the consent page offers only **Deny**. Administrators may always
+connect, but an administrator's token reads everything: give administrators a second, non-admin
+account for the assistant.
 
-![Permissions tab of a Dolibarr user with the REST OAuth right "Connect applications (AI assistant) via OAuth with own rights" granted](images/quick-start/02-dolibarr-connect-right.png)
+![Permissions tab of a Dolibarr user with the REST OAuth (AI access) right "Connect applications (AI assistant) via OAuth with own rights" granted](images/quick-start/02-dolibarr-connect-right.png)
 
 The assistant reads with all rights of the user, Dolibarr has no scopes. Check what the users you
 grant the right to may read: see

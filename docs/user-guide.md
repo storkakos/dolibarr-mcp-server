@@ -137,7 +137,7 @@ More questions that work well:
 |---|---|
 | One customer | "Show me the details of North Customer Ltd." |
 | Invoices by status | "Which invoices are unpaid?", "Which invoices were paid?" |
-| One invoice | "What is in invoice IN2611-0001, and is it paid?" |
+| One invoice | "What is in invoice `IN<YYMM>-0001`, and is it paid?", with your invoice's real reference |
 | Proposals and orders | "Which proposals are open?", "Show me the latest orders." |
 | Products | "Which services do we sell, and at what price?" |
 | Check the account | "Who am I in Dolibarr, and what may I read?" |
@@ -148,8 +148,9 @@ in Dolibarr.
 
 ### Tips
 
-- **Name the customer or the reference** (`IN2611-0001`) when you mean one record. It is faster
-  and more exact than describing it.
+- **Name the customer or the reference** when you mean one record, for example an invoice like
+  `IN<YYMM>-0001` (`<YYMM>` is the invoice's year and month). It is faster and more exact than
+  describing it.
 - **Say what you want back:** "as a table", "only the totals", "the five newest".
 - **Ask follow-up questions** in the same chat: "And which of these are older than 30 days?"
 - **Large lists are cut off.** The assistant reads at most a fixed number of rows per lookup (50 by
@@ -159,14 +160,14 @@ in Dolibarr.
 
 If you ask it to change something, it tells you that it cannot:
 
-![Question asking to mark an invoice as paid, and the answer that it can only read and you should do it in Dolibarr](images/user-guide/09-read-only.png)
+![Question asking to mark an invoice as paid: the assistant finds the invoice, says its tools only read, and that you mark it as paid in Dolibarr](images/user-guide/09-read-only.png)
 
 ### What you have no right for
 
 If your Dolibarr account may not read something, the assistant cannot read it either. For a user
 without the right to read invoices, it has no invoice lookup at all and says so:
 
-![A user without the invoice right asks for unpaid invoices; the assistant answers that it has no access to invoices](images/user-guide/10-no-invoice-right.png)
+![A user without the invoice right asks for unpaid invoices; the assistant answers that it has no access to invoice data because the user has no right to read invoices](images/user-guide/10-no-invoice-right.png)
 
 Ask your administrator if you need the right.
 
@@ -179,9 +180,10 @@ Ask your administrator if you need the right.
   once.
 - **To disconnect** in the chat: **MCP Settings** icon → **Revoke** (the red icon next to
   **Dolibarr**).
-- **To disconnect** in Dolibarr: open your own user card (click your name at the top right), then
-  the tab **Connected applications**. It lists every application connected to your account, since when,
-  and how long the connection stays valid without use. Click **End connection**.
+- **To disconnect** in Dolibarr: open your own user card (click your name at the top right, then
+  **Card** in the menu that opens), then the tab **Connected applications**. It lists every
+  application connected to your account, since when, and how long the connection stays valid
+  without use. Click **End connection**.
 
 ![Dolibarr user card, tab Connected applications: LibreChat MCP Client with the End connection button](images/user-guide/11-dolibarr-connected-applications.png)
 

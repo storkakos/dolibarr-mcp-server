@@ -279,7 +279,7 @@ For every person who should log in with Keycloak:
    - a password is not needed for the Keycloak login; leave the generated one or set a random one
 2. On the user's **Permissions** tab, give the rights this person needs in Dolibarr. To use the
    assistant, this includes **Connect applications (AI assistant) via OAuth with own rights**
-   (module REST-OAuth). Without it, the consent page offers only **Deny**.
+   (module **REST OAuth (AI access)**). Without it, the consent page offers only **Deny**.
 3. Restrict which customers the user sees as for any other user (for example sales representative
    assignments without the right to see all customers).
 
@@ -507,8 +507,8 @@ model specs.
 
 LibreChat registers itself with restoauth with the callback
 `https://chat.example.com/api/mcp/dolibarr/oauth/callback`. restoauth accepts the registration only
-if this callback is on its allowlist. In Dolibarr, **Setup** → **Modules** → **REST-OAuth** → gear
-icon:
+if this callback is on its allowlist. In Dolibarr, **Setup** → **Modules** → **REST OAuth (AI
+access)** → gear icon:
 
 | Field | Value |
 |---|---|

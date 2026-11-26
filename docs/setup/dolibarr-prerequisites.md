@@ -72,8 +72,8 @@ unpacks it to `htdocs/custom/restoauth`. Details, installing from a checkout, an
 
 ## Configure Dolibarr
 
-1. **Enable the modules.** Setup → Modules: enable **API REST** and **REST-OAuth (AI access)**.
-2. **restoauth setup page** (Setup → Modules → REST-OAuth → gear icon):
+1. **Enable the modules.** Setup → Modules: enable **API REST** and **REST OAuth (AI access)**.
+2. **restoauth setup page** (Setup → Modules → **REST OAuth (AI access)** → gear icon):
 
    | Field | Value for the MCP server |
    |---|---|
@@ -84,8 +84,9 @@ unpacks it to `htdocs/custom/restoauth`. Details, installing from a checkout, an
    | Lifetimes | The defaults (access token 1 hour, connection 30 days without use and 90 days at most) fit the MCP server. See [restoauth README → Lifetimes](https://github.com/storkakos/dolibarr-restoauth#lifetimes). |
 
 3. **Grant the connect right.** Give the users or groups that should use the assistant the right
-   **Connect applications (AI assistant) via OAuth with own rights** (REST-OAuth module). Users
-   without it see no Allow button on the consent page. Administrators may always connect.
+   **Connect applications (AI assistant) via OAuth with own rights** (module **REST OAuth (AI
+   access)**). Users without it see no Allow button on the consent page. Administrators may always
+   connect.
 4. **Leave `API_IN_TOKEN_TABLE` off.** It is broken in Dolibarr 23.0.3 (every REST request fails
    with `503`); restoauth maps its tokens through a hook instead. The setup page shows an error box
    if it is on.
