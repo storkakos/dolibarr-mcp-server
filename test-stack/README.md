@@ -9,7 +9,7 @@ against real software. It reproduces the validation run of
 [Example setup: Keycloak and LibreChat](../docs/setup/example-keycloak-librechat.md).
 
 It starts a TLS proxy (Caddy, or nginx in the [nginx variant](#nginx-variant)) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
-`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.3.0, Keycloak 26.8.2, MongoDB,
+`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.3.1, Keycloak 26.8.2, MongoDB,
 LibreChat v0.8.9 and the MCP server built from this repo. Inside the stack's network the hostnames
 point to the proxy, so no hosts file is needed.
 

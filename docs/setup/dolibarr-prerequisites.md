@@ -55,7 +55,7 @@ manual.
 | Component | Version | Validation run |
 |---|---|---|
 | Dolibarr | 23.0.4 (official `dolibarr/dolibarr` image, Apache with mod_php) | 2026-11-24 |
-| restoauth | 0.3.0 | 2026-11-25 |
+| restoauth | 0.3.1 | 2026-11-26 |
 | Keycloak (only with an identity provider) | 26.8.2 | 2026-11-24 |
 | LibreChat (MCP client of the example setup) | v0.8.9 | 2026-11-24 |
 
