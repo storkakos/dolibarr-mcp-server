@@ -678,7 +678,6 @@ row.
 | Keycloak: "Invalid redirect uri" after **Log out** | `OPENID_POST_LOGOUT_REDIRECT_URI` is not listed exactly under **Valid post logout redirect URIs** of the `librechat` client. |
 | **Sign in with Keycloak** logs the previous user in without a form | `OPENID_USE_END_SESSION_ENDPOINT` is not `true` (restart LibreChat after changing `.env`), so LibreChat never sent the browser to Keycloak's logout. |
 | Dolibarr is still logged in as the previous user, and the consent page names the previous user | The `dolibarr` client has no **Front channel logout** with the **Front-channel logout URL** `https://erp.example.com/custom/restoauth/frontchannel-logout.php`, or Dolibarr and Keycloak are on different sites (see [Log out of Keycloak too](#env-log-out-of-keycloak-too)). Click **Deny**, log out of Dolibarr, then connect again. |
-| After the Keycloak login Dolibarr shows an empty page and is logged out again | The front-channel logout endpoint was loaded while Dolibarr's session had already ended. Log in again; the second login works. In LibreChat, connect **Dolibarr** again. |
 | LibreChat refuses the login as rate limited (`auth_rate_limited`) | LibreChat allows about 7 logins per 5 minutes per IP. Wait five minutes. |
 
 ### 9. Dolibarr's own Logout, then a Keycloak login lands where it should

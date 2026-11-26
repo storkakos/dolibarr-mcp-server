@@ -385,7 +385,7 @@ class LibreChat:
         if confirm is not None:  # no id_token_hint: Keycloak asks "Do you want to log out?"
             r = _post_form(self.b, r, confirm.find_parent("form"), {"confirmLogout": "Logout"})
         # Front-channel logout: Keycloak shows a page that loads each client's logout URL in an iframe (for
-        # Dolibarr: user/logout.php?noredirect=1, with Dolibarr's session cookie), then continues to the
+        # Dolibarr: restoauth's frontchannel-logout.php, with Dolibarr's session cookie), then continues to the
         # post-logout redirect URI.
         soup = BeautifulSoup(r.text, "lxml")
         frames = [urljoin(r.url, f["src"]) for f in soup.find_all("iframe") if f.get("src")]
