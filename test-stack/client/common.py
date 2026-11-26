@@ -1,4 +1,5 @@
 """TEST ONLY. Shared values and helpers of the test stack. Every password and secret here is a test value."""
+import os
 import re
 import time
 from urllib.parse import urljoin
@@ -9,7 +10,10 @@ from bs4 import BeautifulSoup
 DOLIBARR = "https://erp.example.com"
 SSO = "https://sso.example.com"
 CHAT = "https://chat.example.com"
-MCP = "https://mcp.example.com/mcp"
+# The MCP server's public URL (its MCP_RESOURCE_URL), group setting TEST_MCP_URL (README "Group settings").
+# The only place the test client names it: checks, flows and config edits all use this value. The default
+# is the repo stack's; the combined stack, where each repo's server has its own host name, sets the variable.
+MCP = os.environ.get("TEST_MCP_URL", "https://mcp.example.com/mcp")
 REALM = "example"
 # restoauth's issuer: the module URL behind the proxy (the setup page's Issuer field stays empty).
 ISSUER = f"{DOLIBARR}/custom/restoauth"
