@@ -26,6 +26,9 @@ from common import CHAT, KC_USERS, REALM, SSO, kc_admin
 # combined stack's assistant has several servers) the dolibarr server must be one of them.
 OWN_SPEC = "dolibarr-assistant"
 TEST_DEFAULT_SPEC = os.environ.get("TEST_DEFAULT_SPEC", OWN_SPEC)
+# Spec used to start chats. Defaults to TEST_DEFAULT_SPEC so the repo stack behaves as before;
+# the combined stack sets it to the repo's own assistant while TEST_DEFAULT_SPEC is combo-assistant.
+TEST_CHAT_SPEC = os.environ.get("TEST_CHAT_SPEC", TEST_DEFAULT_SPEC)
 
 # Seconds to wait for LibreChat before the first check of this group (it boots after the setup).
 READY_TIMEOUT = int(os.environ.get("LIBRECHAT_READY_TIMEOUT", "300"))
@@ -123,7 +126,7 @@ def _whoami_chat(user):
     if not flows.llm_key_present():
         return "SKIP no shared LLM key (LITELLM_KEY in /root/shared/llm.env on the test VM, else test-stack/llm.env), see README"
     lc = chats[user[0]]
-    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == TEST_DEFAULT_SPEC)
+    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == TEST_CHAT_SPEC)
     calls, text = lc.ask("Use the whoami tool: who am I in Dolibarr?", spec)
     retried = ""
     if not calls and not text.strip():  # the model sometimes answers nothing: ask once more
