@@ -161,7 +161,8 @@ services:
     # LibreChat does not substitute ${LITELLM_MODEL} in model names, so the config is rendered at start:
     # only __LITELLM_MODEL__ of the template is replaced (key and base URL stay ${...} for LibreChat).
     # Without a key file the model is "none"; the chat checks skip then.
-    # The model name must not contain | & or a backslash. Twin: itop-mcp-server test-infra 09.
+    # | & and a backslash in the model name are escaped for sed, so the name arrives unchanged.
+    # Twin: itop-mcp-server test-infra 09.
     entrypoint:
       - /bin/sh
       - -c
