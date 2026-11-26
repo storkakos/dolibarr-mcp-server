@@ -280,7 +280,7 @@ def part_admin(browser):
     scroll_to(page, page.get_by_text("Registered clients").first)
     shot(page, "quick-start/10-restoauth-registered-clients")
 
-    # anna's Permissions tab, at the REST OAuth module
+    # anna's Permissions tab, at the module REST OAuth (AI access)
     page.goto(f"{DOLIBARR}/user/list.php?search_login=anna")
     page.locator("a[href*='/user/card.php?id=']", has_text="anna").first.click()
     page.get_by_role("link", name="Permissions").first.click()
