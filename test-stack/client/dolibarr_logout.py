@@ -12,8 +12,8 @@ run()).
 """
 import sys
 
-import flows
 from common import DOLIBARR, KC_USERS, browser, follow, say
+from flows import form_data
 
 A = KC_USERS[0]  # anna
 
@@ -46,11 +46,13 @@ def dolibarr_keycloak_login(b, user, pwd) -> str:
     if not openid_url.startswith("http"):
         openid_url = f"{DOLIBARR}/{openid_url.lstrip('/')}"
     r = follow(b, b.get(openid_url, allow_redirects=False))
-    # Now at Keycloak's login page; fill in the form.
-    from flows import _post_form
+    # Now at Keycloak's login page; fill in the form (same as flows.browse_to_consent).
     soup = BeautifulSoup(r.text, "lxml")
-    form = soup.find("form")
-    r = _post_form(b, r, form, {"username": user, "password": pwd, "login": "Sign In"})
+    form = soup.find("form", id="kc-form-login")
+    assert form, "no Keycloak login form"
+    d = form_data(form)
+    d.update({"username": user, "password": pwd, "credentialId": ""})
+    r = follow(b, b.post(form["action"], data=d, allow_redirects=False))
     return r.url
 
 
