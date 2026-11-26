@@ -34,7 +34,7 @@
 #   VM_KEY          default ~/.ssh/itop-mcp-test-vm
 #   VM_KNOWN_HOSTS  default ~/.ssh/itop-mcp-test-vm.known_hosts
 #   VM_SLOT_MAX     ticket stacks at once on the VM (default 6)
-#   VM_SLOT_MIN_MB  available RAM in MB (free -m, column available) needed to start a stack (default 3072 = 3 GB)
+#   VM_SLOT_MIN_MB  available RAM in MB (MemAvailable in /proc/meminfo; free -m shows it as available) needed to start a stack (default 3072 = 3 GB)
 #   VM_SLOT_TIMEOUT seconds to wait for a slot before giving up (default 1800)
 #   START_TIMEOUT   seconds for build + start until the setup is complete (default 1500)
 #   VM_LLM_ENV      the shared LLM key file on the VM (default /root/shared/llm.env; point it at a
@@ -266,8 +266,9 @@ set -e
 echo "$ME: checks exit code $status"
 [ "$status" -eq 255 ] && { rm -f "$checks_out"; exit 255; }
 
-# 5. Key scan, on the VM only: every *_KEY value of the shared file (and a 16-character piece of it,
-# past the provider prefix) is looked up in the start log, all logs of the stack, the check output
+# 5. Key scan, on the VM only: every *_KEY value of the shared file and the host of its
+# LITELLM_BASE_URL (export, quotes and \r stripped; each also as a 16-character piece past the
+# provider prefix) is looked up in the start log, all logs of the stack, the check output
 # (sent back from here) and the config of this run's images (IMAGE_RE). Only places are printed, never
 # a value. Without the file there is nothing to look for.
 rc=0
@@ -276,7 +277,8 @@ leaks="$(vm "[ -f $LLM_ENV ] || { echo NOKEY; exit 0; }
   ($IN_STACK && $DC logs --no-color) > $DIR/compose.log 2>&1
   imgs=\$($IN_STACK && $DC config --images 2>/dev/null | grep -E '$IMAGE_RE' | sort -u)
   [ -z \"\$imgs\" ] || docker image inspect \$imgs > $DIR/images.json 2>/dev/null
-  sed -n 's/^[A-Za-z0-9_]*_KEY=//p' $LLM_ENV | tr -d '\\r\"' | while IFS= read -r k; do
+  sed 's/^[[:space:]]*export[[:space:]][[:space:]]*//' $LLM_ENV | tr -d \"\\r\\\"'\" |
+    sed -n 's/^[A-Za-z0-9_]*_KEY=//p; s,^LITELLM_BASE_URL=[A-Za-z]*://\\([^/:]*\\).*,\\1,p' | while IFS= read -r k; do
     [ \${#k} -ge 8 ] || continue
     p=\$(printf %s \"\$k\" | cut -c10-25); [ \${#p} -ge 8 ] || p=\$k
     for f in start.log compose.log checks.out images.json; do
@@ -292,7 +294,7 @@ if [ "$rc" -ne 0 ]; then
 elif [ "$leaks" = NOKEY ]; then
   echo "$ME: key scan: no shared LLM key, nothing to look for"
 elif [ -n "${leaks// /}" ]; then
-  echo "$ME: key scan: an LLM key shows up in: $leaks(on the VM, removed with the run's folder)" >&2
+  echo "$ME: key scan: an LLM key or the LLM host shows up in: $leaks(on the VM, removed with the run's folder)" >&2
   [ "$status" -eq 0 ] && status=5
 else
   echo "$ME: key scan: no LLM key in the start log, the stack's logs, the check output or the images"

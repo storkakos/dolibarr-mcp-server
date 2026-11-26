@@ -166,7 +166,8 @@ services:
       - /bin/sh
       - -c
       - |
-        sed "s|__LITELLM_MODEL__|$${LITELLM_MODEL:-none}|g" /librechat.yaml.tmpl > /tmp/librechat.yaml
+        m=$$(printf '%s' "$${LITELLM_MODEL:-none}" | sed 's/[\\|&]/\\&/g')
+        sed "s|__LITELLM_MODEL__|$$m|g" /librechat.yaml.tmpl > /tmp/librechat.yaml
         exec "$$@"
       - librechat
     command: ["npm", "run", "backend"]
