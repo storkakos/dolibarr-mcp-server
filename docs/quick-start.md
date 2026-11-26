@@ -13,7 +13,7 @@ screenshots, and links to the detailed manuals for every step:
   client (optional, one possible setup)
 
 When this guide and a manual differ, the manual is right. The screenshots come from the
-[test stack](../test-stack/README.md) (Dolibarr 23.0.4, restoauth 0.2.2, Keycloak 26.8.2,
+[test stack](../test-stack/README.md) (Dolibarr 23.0.4, restoauth 0.3.0, Keycloak 26.8.2,
 LibreChat v0.8.9). Your screens may look slightly different in other versions.
 
 > **Try it first without risk.** The test stack runs this whole setup on one Docker host, with

@@ -9,7 +9,7 @@ against real software. It reproduces the validation run of
 [Example setup: Keycloak and LibreChat](../docs/setup/example-keycloak-librechat.md).
 
 It starts a TLS proxy (Caddy, or nginx in the [nginx variant](#nginx-variant)) for `erp.example.com`, `sso.example.com`, `chat.example.com` and
-`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.2.2, Keycloak 26.8.2, MongoDB,
+`mcp.example.com`, MariaDB, Dolibarr 23.0.4 with restoauth 0.3.0, Keycloak 26.8.2, MongoDB,
 LibreChat v0.8.9 and the MCP server built from this repo. Inside the stack's network the hostnames
 point to the proxy, so no hosts file is needed.
 
@@ -100,6 +100,25 @@ check of the group `librechat`, the checks wait until LibreChat answers (`/healt
 offers the Keycloak login; neither counts against LibreChat's login limit), up to
 `LIBRECHAT_READY_TIMEOUT` seconds (default 300). If it does not, every check of the group fails with
 "not run: LibreChat at … not ready within … s".
+
+### Group settings
+
+Some check groups take values from the stack they run on as **group settings** (see combined-test-stack
+GLOSSARY). The defaults are the repo stack's values, so the repo stack behaves as before. The combined
+stack sets them instead of patching the groups at run time.
+
+| Setting | Group | Default | Description |
+|---|---|---|---|
+| `TEST_MCP_URL` | all (`common.MCP`) | `https://mcp.example.com/mcp` | The MCP server's public address: the checks call it, compare it with the metadata and config, and expect it in the LibreChat config |
+| `TEST_DEFAULT_SPEC` | `librechat` | `dolibarr-assistant` | The name of the assistant spec LibreChat preselects. With the default the spec must have exactly the dolibarr server; with another name (the combined stack's `combo-assistant`) the dolibarr server must be one of its servers |
+| `TEST_CHAT_SPEC` | `librechat` | `TEST_DEFAULT_SPEC` | The assistant spec used to start chats (whoami checks). Defaults to `TEST_DEFAULT_SPEC` so the repo stack behaves as before; the combined stack sets it to `dolibarr-assistant` while `TEST_DEFAULT_SPEC` is `combo-assistant` |
+
+Set them as environment variables of the client (the combined stack's client sets them before it imports
+a repo's groups):
+
+```sh
+docker compose run --rm -e TEST_DEFAULT_SPEC=combo-assistant client python checks.py librechat
+```
 
 ### Add a check
 
@@ -202,7 +221,9 @@ the shared key `/root/shared/llm.env` (see [test-vm.md](../docs/agents/test-vm.m
 On the test VM the shared key file `/root/shared/llm.env` is the default; it has `LITELLM_KEY`,
 `LITELLM_BASE_URL` and `LITELLM_MODEL`. Compose renders `librechat/librechat.yaml.tmpl` when LibreChat starts (LibreChat does not substitute `${LITELLM_MODEL}` in model names, so only the model name is filled in; key and base URL stay `${...}` in the `LiteLLM` endpoint). For another provider or model, change that endpoint and the variables in `llm.env`. A chat
 check retries once on an empty answer and says so in its output. Without a key file, `checks.py` reports
-the two chat checks as SKIP ("no shared LLM key"), and SKIPs do not fail the run.
+the two chat checks as SKIP ("no shared LLM key"), and the same with a key file without `LITELLM_MODEL`
+("no LITELLM_MODEL"); SKIPs do not fail the run. The model name reaches LibreChat unchanged, also with
+`&`, `|` or `\` in it.
 
 ## Screenshots
 
@@ -435,6 +456,9 @@ LibreChat's default a single run already reaches the limit and a second run righ
   line (`waited N s for LibreChat's login limit`) and makes that run up to five minutes longer.
 - **Reset**: LibreChat keeps the count in memory, so restarting it starts a new window:
   `docker compose restart librechat` (with `-p $RUN` on the VM). The checks wait until it answers again.
+- **`LIBRECHAT_LOGIN_WINDOW`** (client): when LibreChat sends no `X-RateLimit-Reset`, the checks wait a
+  whole window, this many minutes (default 5, LibreChat's default). Set it on the client to match a
+  changed `LOGIN_WINDOW`.
 
 ## Notes
 

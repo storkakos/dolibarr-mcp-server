@@ -19,6 +19,17 @@ import keycloak_realm
 from checklib import Group, Skip
 from common import CHAT, KC_USERS, REALM, SSO, kc_admin
 
+# Group settings (see combined-test-stack GLOSSARY): values the group takes from the stack it runs on.
+# Defaults are the repo stack's values, so the repo stack behaves as before.
+# TEST_MCP_URL is read in common.py (common.MCP), so every group uses the same address.
+# With the own spec the preselected assistant must have exactly the dolibarr server; with another spec (the
+# combined stack's assistant has several servers) the dolibarr server must be one of them.
+OWN_SPEC = "dolibarr-assistant"
+TEST_DEFAULT_SPEC = os.environ.get("TEST_DEFAULT_SPEC", OWN_SPEC)
+# Spec used to start chats. Defaults to TEST_DEFAULT_SPEC so the repo stack behaves as before;
+# the combined stack sets it to the repo's own assistant while TEST_DEFAULT_SPEC is combo-assistant.
+TEST_CHAT_SPEC = os.environ.get("TEST_CHAT_SPEC", TEST_DEFAULT_SPEC)
+
 # Seconds to wait for LibreChat before the first check of this group (it boots after the setup).
 READY_TIMEOUT = int(os.environ.get("LIBRECHAT_READY_TIMEOUT", "300"))
 
@@ -52,21 +63,8 @@ group = Group(__name__, "Example setup: LibreChat (docs/setup/example-keycloak-l
               services=("librechat",), ready=wait_for_librechat)
 check = group.check
 anna, bob, carl, dave = KC_USERS
-skipped: dict = {}  # user -> why their LibreChat login was skipped (LibreChat's login limit)
-
-
-class _Sessions(dict):
-    """The LibreChat sessions of earlier checks by user name. If that login was skipped because of
-    LibreChat's login limit, asking for the session skips the later check too (with the same reason)
-    instead of failing with a KeyError. (_whoami_chat reads chats[...] directly, so this is done here.)"""
-
-    def __missing__(self, key):
-        if key in skipped:
-            raise Skip(f"needs {key}'s LibreChat login, skipped: {skipped[key]}")
-        raise KeyError(key)
-
-
-chats = _Sessions()
+chats = {}
+skipped = {}  # user -> why their LibreChat login was skipped (LibreChat's login limit)
 
 
 def _librechat(user):
@@ -82,8 +80,18 @@ def _librechat(user):
             + (f", waited {lc.waited} s for LibreChat's login limit" if lc.waited else ""))
 
 
+def _chat(user):
+    """The LibreChat session of an earlier check. If that login was skipped because of LibreChat's login
+    limit, this check is skipped too (with the same reason) instead of failing for lack of a session."""
+    if user[0] in skipped:
+        raise Skip(f"needs {user[0]}'s LibreChat login, skipped: {skipped[user[0]]}")
+    if user[0] not in chats:
+        raise AssertionError(f"needs {user[0]}'s LibreChat login, which has not run")
+    return chats[user[0]]
+
+
 def _connect(user):
-    s = chats[user[0]].connect_dolibarr()
+    s = _chat(user).connect_dolibarr()
     if s["consent"]:
         text = s["consent"]
         assert "LibreChat MCP Client" in text and f"({user[0]})" in text and "may not connect" not in text, text[:400]
@@ -103,24 +111,30 @@ def _():
 
 @check("example option: Dolibarr assistant preselected for new chats")
 def _():
-    specs = chats[anna[0]].config()["modelSpecs"]
-    spec = next(x for x in specs["list"] if x["name"] == "dolibarr-assistant")
-    assert specs.get("prioritize") is True and spec.get("default") is True \
-        and spec.get("mcpServers") == ["dolibarr"], specs
-    return "default spec dolibarr-assistant with the dolibarr server"
+    specs = _chat(anna).config()["modelSpecs"]
+    spec = next(x for x in specs["list"] if x["name"] == TEST_DEFAULT_SPEC)
+    servers = spec.get("mcpServers") or []
+    own = servers == ["dolibarr"] if TEST_DEFAULT_SPEC == OWN_SPEC else "dolibarr" in servers
+    assert specs.get("prioritize") is True and spec.get("default") is True and own, specs
+    return f"default spec {TEST_DEFAULT_SPEC} with the dolibarr server" + ("" if servers == ["dolibarr"] else f" (servers {servers})")
+
+
+WHOAMI_PROMPT = "Use the whoami tool: who am I in Dolibarr?"
 
 
 def _whoami_chat(user):
     if not flows.llm_key_present():
         return "SKIP no shared LLM key (LITELLM_KEY in /root/shared/llm.env on the test VM, else test-stack/llm.env), see README"
-    lc = chats[user[0]]
-    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == "dolibarr-assistant")
-    calls, text = lc.ask("Use the whoami tool: who am I in Dolibarr?", spec)
+    if not os.environ.get("LITELLM_MODEL"):
+        return "SKIP the LLM key file has no LITELLM_MODEL (LibreChat would ask for the model 'none'), see README"
+    lc = _chat(user)
+    spec = next(x for x in lc.config()["modelSpecs"]["list"] if x["name"] == TEST_CHAT_SPEC)
+    calls, text = lc.ask(WHOAMI_PROMPT, spec)
     retried = ""
     if not calls and not text.strip():  # the model sometimes answers nothing: ask once more
         print("chat answer empty, retrying once", flush=True)
         retried = " (after one retry: first answer empty)"
-        calls, text = lc.ask("Use the whoami tool: who am I in Dolibarr?", spec)
+        calls, text = lc.ask(WHOAMI_PROMPT, spec)
     outputs = " ".join(str(c.get("output")) for c in calls if "whoami" in (c.get("name") or ""))
     assert f"{user[2]} {user[3]} ({user[0]})" in outputs, f"tool calls {calls}, answer {text[:200]}"
     return text.strip()[:80] + retried
@@ -176,7 +190,7 @@ def _():
 def _():
     # One more LibreChat login (bob) on top of anna's and carl's. LibreChat counts two requests per login
     # against LOGIN_MAX (raised in the test stack); if the budget is used up, LibreChat.login waits for the window.
-    lc = chats[carl[0]]
+    lc = _chat(carl)
     out = lc.logout()
     assert out["end_session"] == f"{SSO}/realms/{REALM}/protocol/openid-connect/logout", out
     assert out["landed"].startswith(f"{CHAT}/login"), f"after the logout the browser landed on {out['landed']}"
@@ -198,3 +212,9 @@ def _():
 def _():
     import user_switch  # the scenario lives in its own file (combined-stack-findings 06)
     return user_switch.verdict(user_switch.run())
+
+
+@check("example 9: Dolibarr's own Logout, then a Keycloak login lands where it should")
+def _():
+    import dolibarr_logout
+    return dolibarr_logout.verdict(dolibarr_logout.run())

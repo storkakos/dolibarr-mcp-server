@@ -4,7 +4,7 @@
 
 # The one place that pins restoauth. Override for a test with
 #   docker compose build --build-arg RESTOAUTH_VERSION=X.Y.Z dolibarr
-ARG RESTOAUTH_VERSION=0.2.2
+ARG RESTOAUTH_VERSION=0.3.0
 
 # Stage 1: the release ZIP module_restoauth-<version>.zip, from one of three sources:
 # - default: the asset of the GitHub release v<version> if that release has the ZIP attached;
@@ -28,6 +28,14 @@ RUN set -eu; V="$RESTOAUTH_VERSION"; ZIP="module_restoauth-$V.zip"; \
     if [ -f /local/.no-local-restoauth ]; then \
       if curl -fsSL -o "/$ZIP" "$RESTOAUTH_REPO/releases/download/v$V/$ZIP"; then \
         echo "restoauth: release asset $ZIP of v$V"; \
+        if [ "$V" = "0.3.0" ]; then \
+          EXPECTED="875c5824a3053cb81e17da3bd70a02e4ce89b6b610e339cbfbc55a3cbbc47bde"; \
+          ACTUAL="$(sha256sum "/$ZIP" | cut -d' ' -f1)"; \
+          if [ "$ACTUAL" != "$EXPECTED" ]; then \
+            echo "restoauth: $ZIP sha256 mismatch: expected $EXPECTED, got $ACTUAL" >&2; exit 1; \
+          fi; \
+          echo "restoauth: $ZIP sha256 verified"; \
+        fi; \
       else \
         echo "restoauth: no release asset for v$V, building $ZIP from the tag"; \
         git -c advice.detachedHead=false clone -q --depth 1 --branch "v$V" "$RESTOAUTH_REPO.git" /src; \
